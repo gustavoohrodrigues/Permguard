@@ -65,6 +65,9 @@ Implementado:
 - Conversão e explicação de modos `000` a `7777`, incluindo SUID, SGID e sticky.
 - Alteração individual de modo em arquivo ou diretório.
 - Preview, confirmação digitada, revalidação anti-TOCTOU e auditoria JSONL `0600`.
+- Temas Midnight, Nord, Gruvbox Dark, Dracula e High Contrast.
+- Modo sem cores, bordas ASCII, filtros por tipo e ordenação da listagem.
+- Tela de auditoria e menu de ajuda contextual dentro da TUI.
 
 Não implementado: chown, chgrp, relatórios, ACL/SELinux/capabilities mutáveis e recursão. Consulte [o roadmap](docs/roadmap.md).
 
@@ -154,6 +157,12 @@ Outros usuários (---): sem acesso.
 | `c` | Limpar filtro |
 | `r` | Atualizar |
 | `m` | Informar uma nova permissão para o item selecionado |
+| `f` | Alternar filtro: todos, diretórios, arquivos e links |
+| `s` | Ordenar por nome, tamanho, permissão ou modificação |
+| `a` | Abrir auditoria local |
+| `t` | Alternar tema |
+| `u` | Alternar Unicode/bordas ASCII |
+| `C` | Alternar cores |
 | `?` | Ajuda |
 | `q` | Sair |
 
@@ -188,6 +197,10 @@ Symlinks, devices, sockets, `/`, `/proc`, `/sys`, `/dev` e `/run` são bloqueado
 - `Enter` entra no diretório selecionado ou abre os detalhes.
 
 Esses fluxos não varrem toda a árvore e não seguem symlinks automaticamente.
+
+## Temas e acessibilidade
+
+Pressione `t` para percorrer `midnight`, `nord`, `gruvbox-dark`, `dracula` e `high-contrast`. `C` ativa ou desativa cores e `u` alterna entre bordas Unicode e ASCII. O menu completo pode ser aberto a qualquer momento com `?` ou `h`.
 
 ## Auditoria
 

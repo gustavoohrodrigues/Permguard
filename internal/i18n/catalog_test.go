@@ -1,9 +1,6 @@
 package i18n
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 func TestCatalogoPortuguesCompletoParaChavesCentrais(t *testing.T) {
 	c, err := Load("pt-BR")
@@ -11,7 +8,7 @@ func TestCatalogoPortuguesCompletoParaChavesCentrais(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, key := range []string{"app.name", "screen.browser", "error.permissao_negada", "footer.keys"} {
-		if value := c.T(key); strings.HasPrefix(value, "[") {
+		if value := c.T(key); value == "["+key+"]" {
 			t.Errorf("chave ausente: %s", key)
 		}
 	}

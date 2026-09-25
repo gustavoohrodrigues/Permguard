@@ -1,7 +1,9 @@
 package audit
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +13,39 @@ import (
 )
 
 type Writer struct{ Path string }
+
+func ReadRecent(path string, limit int) ([]domain.AuditRecord, error) {
+	if limit < 1 {
+		limit = 1
+	}
+	file, err := os.Open(path) // #nosec G304 -- caminho de auditoria configurado pelo operador.
+	if errors.Is(err, os.ErrNotExist) {
+		return []domain.AuditRecord{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("falha_leitura_auditoria: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	records := make([]domain.AuditRecord, 0, limit)
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 4096), 1024*1024)
+	for scanner.Scan() {
+		var record domain.AuditRecord
+		if json.Unmarshal(scanner.Bytes(), &record) != nil {
+			continue
+		}
+		if len(records) == limit {
+			copy(records, records[1:])
+			records[len(records)-1] = record
+		} else {
+			records = append(records, record)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("falha_leitura_auditoria: %w", err)
+	}
+	return records, nil
+}
 
 func Path(userPath, rootPath string, root bool) (string, error) {
 	value := userPath

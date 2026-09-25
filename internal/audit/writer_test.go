@@ -29,3 +29,20 @@ func TestAppendJSONLRestrito(t *testing.T) {
 		t.Fatalf("registro inesperado: %s", text)
 	}
 }
+
+func TestReadRecentRespeitaLimite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.jsonl")
+	writer := Writer{Path: path}
+	for _, mode := range []string{"600", "640"} {
+		if err := writer.Append(domain.AuditRecord{Timestamp: time.Now(), Operation: "chmod", NewMode: mode}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	records, err := ReadRecent(path, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].NewMode != "640" {
+		t.Fatalf("registros: %+v", records)
+	}
+}

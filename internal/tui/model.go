@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/gustavoohrodrigues/permguard/internal/audit"
 	"github.com/gustavoohrodrigues/permguard/internal/config"
 	"github.com/gustavoohrodrigues/permguard/internal/domain"
 	"github.com/gustavoohrodrigues/permguard/internal/filesystem"
@@ -36,6 +38,7 @@ type Dependencies struct {
 	Changer     ModeChanger
 	Audit       AuditWriter
 	AllowWrites bool
+	AuditPath   string
 }
 type loadedMsg struct {
 	path    string
@@ -56,19 +59,25 @@ type appliedMsg struct {
 	metadata domain.FileMetadata
 	err      error
 }
+type auditLoadedMsg struct {
+	records []domain.AuditRecord
+	err     error
+}
 
 type Model struct {
-	deps                          Dependencies
-	styles                        styles
-	width, height, screen, cursor int
-	path, filter, status          string
-	entries                       []domain.DirectoryEntry
-	selected                      *domain.FileMetadata
-	input                         textinput.Model
-	inputMode                     inputMode
-	pendingMode                   os.FileMode
-	pending                       *domain.FileMetadata
-	loading, quitting             bool
+	deps                               Dependencies
+	styles                             styles
+	width, height, screen, cursor      int
+	path, filter, status               string
+	themeName, filterType, sortMode    string
+	entries                            []domain.DirectoryEntry
+	auditRecords                       []domain.AuditRecord
+	selected                           *domain.FileMetadata
+	input                              textinput.Model
+	inputMode                          inputMode
+	pendingMode                        os.FileMode
+	pending                            *domain.FileMetadata
+	loading, quitting, colors, unicode bool
 }
 
 func Run(deps Dependencies) error {
@@ -86,7 +95,13 @@ func NewModel(deps Dependencies) Model {
 		start = "."
 	}
 	absolute, _ := filepath.Abs(start)
-	return Model{deps: deps, styles: midnight(), path: absolute, status: deps.Catalog.T("status.loading"), input: input, loading: true}
+	themeName := deps.Config.Display.Theme
+	if _, ok := palettes[themeName]; !ok {
+		themeName = "midnight"
+	}
+	colors := deps.Config.Display.ColorMode != "none" && deps.Config.Display.ColorMode != "sem_cor"
+	unicode := deps.Config.Display.Unicode != "off" && deps.Config.Display.Unicode != "false"
+	return Model{deps: deps, styles: theme(themeName, colors, unicode), themeName: themeName, colors: colors, unicode: unicode, filterType: "all", sortMode: "name", path: absolute, status: deps.Catalog.T("status.loading"), input: input, loading: true}
 }
 
 func (m Model) Init() tea.Cmd { return m.load(m.path) }
@@ -139,6 +154,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pending = nil
 		m.screen = 2
 		m.status = m.deps.Catalog.T("status.permission_changed")
+	case auditLoadedMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.status = m.translateError(msg.err)
+		} else {
+			m.auditRecords = msg.records
+			m.status = m.deps.Catalog.T("status.audit_loaded", len(msg.records))
+		}
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	}
@@ -158,8 +181,30 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.screen = 2
 	case "4":
 		m.screen = 3
-	case "?":
-		m.screen = 4
+	case "5":
+		m.screen, m.loading = 4, true
+		return m, m.loadAudit()
+	case "?", "h":
+		m.screen = 6
+	case "a":
+		m.screen, m.loading = 4, true
+		return m, m.loadAudit()
+	case "t":
+		m.themeName = nextTheme(m.themeName)
+		m.styles = theme(m.themeName, m.colors, m.unicode)
+		m.status = m.deps.Catalog.T("status.theme_changed", m.themeName)
+	case "C":
+		m.colors = !m.colors
+		m.styles = theme(m.themeName, m.colors, m.unicode)
+		m.status = m.deps.Catalog.T("status.colors_changed")
+	case "u":
+		m.unicode = !m.unicode
+		m.styles = theme(m.themeName, m.colors, m.unicode)
+		m.status = m.deps.Catalog.T("status.unicode_changed")
+	case "f":
+		m.cycleFilterType()
+	case "s":
+		m.cycleSort()
 	case "up", "k":
 		m.move(-1)
 	case "down", "j":
@@ -201,7 +246,9 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.loading = true
 		return m, m.load(m.path)
 	case "left":
-		if m.screen > 0 {
+		if m.screen == 6 {
+			m.screen = 4
+		} else if m.screen > 0 && m.screen < 5 {
 			m.screen--
 		}
 	case "right", "tab":
@@ -220,6 +267,51 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m Model) loadAudit() tea.Cmd {
+	return func() tea.Msg {
+		records, err := audit.ReadRecent(m.deps.AuditPath, 200)
+		return auditLoadedMsg{records: records, err: err}
+	}
+}
+
+func (m *Model) cycleFilterType() {
+	order := []string{"all", "directory", "file", "symlink"}
+	for i, value := range order {
+		if value == m.filterType {
+			m.filterType = order[(i+1)%len(order)]
+			break
+		}
+	}
+	m.cursor = 0
+	m.syncSelection()
+	m.status = m.deps.Catalog.T("status.type_filter", m.deps.Catalog.T("filter."+m.filterType))
+}
+
+func (m *Model) cycleSort() {
+	order := []string{"name", "size", "mode", "modified"}
+	for i, value := range order {
+		if value == m.sortMode {
+			m.sortMode = order[(i+1)%len(order)]
+			break
+		}
+	}
+	m.status = m.deps.Catalog.T("status.sort_changed", m.deps.Catalog.T("sort."+m.sortMode))
+	m.syncSelection()
+}
+
+func (m *Model) syncSelection() {
+	visible := m.visibleEntries()
+	if len(visible) == 0 {
+		m.selected = nil
+		return
+	}
+	if m.cursor >= len(visible) {
+		m.cursor = len(visible) - 1
+	}
+	selected := visible[m.cursor].Metadata
+	m.selected = &selected
 }
 
 func (m *Model) move(delta int) {
@@ -344,16 +436,30 @@ func (m Model) applyPending() tea.Cmd {
 }
 
 func (m Model) visibleEntries() []domain.DirectoryEntry {
-	if m.filter == "" {
-		return m.entries
-	}
 	needle := strings.ToLower(m.filter)
 	result := make([]domain.DirectoryEntry, 0)
 	for _, item := range m.entries {
-		if strings.Contains(strings.ToLower(item.Metadata.Name), needle) {
-			result = append(result, item)
+		if needle != "" && !strings.Contains(strings.ToLower(item.Metadata.Name), needle) {
+			continue
 		}
+		if m.filterType == "directory" && item.Metadata.Type != domain.TypeDirectory || m.filterType == "file" && item.Metadata.Type != domain.TypeRegular || m.filterType == "symlink" && item.Metadata.Type != domain.TypeSymlink {
+			continue
+		}
+		result = append(result, item)
 	}
+	sort.SliceStable(result, func(i, j int) bool {
+		a, b := result[i].Metadata, result[j].Metadata
+		switch m.sortMode {
+		case "size":
+			return a.Size < b.Size
+		case "mode":
+			return a.Mode.NumericMode < b.Mode.NumericMode
+		case "modified":
+			return a.ModifiedAt.Before(b.ModifiedAt)
+		default:
+			return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+		}
+	})
 	return result
 }
 
@@ -382,6 +488,8 @@ func (m Model) View() string {
 		body = m.details(contentHeight, width)
 	case 3:
 		body = m.permissionView(contentHeight, width)
+	case 4:
+		body = m.auditView(contentHeight, width)
 	case 5:
 		body = m.changePreview(contentHeight, width)
 	default:
@@ -425,7 +533,13 @@ func (m Model) changePreview(height, width int) string {
 func (m Model) header(width int) string {
 	mode := m.deps.Catalog.T("privilege.mode." + m.deps.Privilege.Mode)
 	left := fmt.Sprintf("PERMGUARD  %s: %s (UID %d)", m.deps.Catalog.T("label.user"), m.deps.Privilege.User, m.deps.Privilege.EffectiveUID)
-	right := m.deps.Catalog.T("label.mode") + ": " + mode
+	right := m.themeName + "  [? " + m.deps.Catalog.T("label.menu") + "]  " + m.deps.Catalog.T("label.mode") + ": " + mode
+	if width < 100 {
+		right = m.themeName + "  [?]"
+	}
+	if width < 72 {
+		right = "[?]"
+	}
 	// Deixa uma coluna de folga: alguns terminais fazem wrap ao escrever
 	// exatamente na última coluna disponível.
 	spaces := width - lipgloss.Width(left) - lipgloss.Width(right) - 3
@@ -436,12 +550,12 @@ func (m Model) header(width int) string {
 }
 
 func (m Model) tabs(width int) string {
-	names := []string{"screen.overview", "screen.browser", "screen.details", "screen.permissions", "screen.help"}
+	names := []string{"screen.overview", "screen.browser", "screen.details", "screen.permissions", "screen.audit"}
 	parts := make([]string, len(names))
 	for i, key := range names {
 		label := fmt.Sprintf("%d:%s", i+1, m.deps.Catalog.T(key))
-		if i == 4 {
-			label = "?:" + m.deps.Catalog.T(key)
+		if width < 90 {
+			label = strconv.Itoa(i + 1)
 		}
 		style := m.styles.tab
 		if i == m.screen {
@@ -497,7 +611,25 @@ func (m Model) browser(height, width int) string {
 	if m.loading {
 		status = m.deps.Catalog.T("status.loading")
 	}
-	lines = append(lines, "", m.styles.muted.Render(status+" · "+m.deps.Catalog.T("label.filter")+": "+emptyAs(m.filter, m.deps.Catalog.T("label.none"))))
+	lines = append(lines, "", m.styles.muted.Render(status+" · "+m.deps.Catalog.T("label.filter")+": "+emptyAs(m.filter, m.deps.Catalog.T("label.none"))+" · "+m.deps.Catalog.T("label.type")+": "+m.deps.Catalog.T("filter."+m.filterType)+" · "+m.deps.Catalog.T("label.sort")+": "+m.deps.Catalog.T("sort."+m.sortMode)))
+	return m.styles.panel.Width(width - 4).Height(height - 2).Render(strings.Join(lines, "\n"))
+}
+
+func (m Model) auditView(height, width int) string {
+	lines := []string{m.styles.title.Render(m.deps.Catalog.T("screen.audit")), m.styles.muted.Render(m.deps.AuditPath), "", m.styles.muted.Render(m.deps.Catalog.T("audit.header"))}
+	maxRows := height - 6
+	start := max(0, len(m.auditRecords)-maxRows)
+	for _, record := range m.auditRecords[start:] {
+		resultStyle := m.styles.success
+		if record.Result != "sucesso" {
+			resultStyle = m.styles.danger
+		}
+		line := fmt.Sprintf("%s  %-8s %-7s %4s→%-4s %s", record.Timestamp.Local().Format("02/01 15:04"), resultStyle.Render(record.Result), record.Operation, record.PreviousMode, record.NewMode, truncate(record.TargetPath, max(12, width-55)))
+		lines = append(lines, line)
+	}
+	if len(m.auditRecords) == 0 && !m.loading {
+		lines = append(lines, m.styles.muted.Render(m.deps.Catalog.T("audit.empty")))
+	}
 	return m.styles.panel.Width(width - 4).Height(height - 2).Render(strings.Join(lines, "\n"))
 }
 
@@ -610,6 +742,12 @@ func emptyAs(value, fallback string) string {
 }
 func min(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+func max(a, b int) int {
+	if a > b {
 		return a
 	}
 	return b

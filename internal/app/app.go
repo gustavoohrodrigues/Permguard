@@ -55,7 +55,7 @@ func (a *Application) Execute() error {
 		if cfg.Audit.Enabled {
 			auditWriter = audit.Writer{Path: auditPath}
 		}
-		return tui.Run(tui.Dependencies{Catalog: catalog, Inspector: inspector, Privilege: privileges, Config: cfg, Changer: change.Service{Inspector: inspector}, Audit: auditWriter, AllowWrites: a.allowWrites})
+		return tui.Run(tui.Dependencies{Catalog: catalog, Inspector: inspector, Privilege: privileges, Config: cfg, Changer: change.Service{Inspector: inspector}, Audit: auditWriter, AuditPath: auditPath, AllowWrites: a.allowWrites})
 	}
 	root.AddCommand(a.inspectCommand(preCatalog), a.permissionCommand(preCatalog), a.changePermissionCommand(preCatalog))
 	root.SetHelpFunc(func(cmd *cobra.Command, _ []string) { printHelp(cmd, preCatalog) })

@@ -16,6 +16,13 @@
 | `c` | limpar filtro |
 | `r` | atualizar |
 | `m` | informar nova permissão e abrir o preview |
+| `f` | alternar filtro de tipo |
+| `s` | alternar ordenação |
+| `a` | abrir auditoria |
+| `t` | alternar tema |
+| `u` | alternar Unicode |
+| `C` | alternar cores |
+| `h`, `?` | abrir menu e ajuda |
 | `Esc` | voltar ao navegador |
 | `q` | sair |
 
