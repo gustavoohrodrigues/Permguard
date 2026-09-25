@@ -1,0 +1,26 @@
+language: pt-BR
+start_path: .
+
+display:
+  theme: midnight
+  color_mode: auto
+  unicode: auto
+  borders: rounded
+  compact_mode: false
+  show_icons: true
+  show_help_bar: true
+  show_status_bar: true
+
+security:
+  require_typed_confirmation: true
+  confirmation_word: ALTERAR
+  allow_read_only_mode: true
+  follow_symlinks_for_read: false
+  follow_symlinks_for_write: false
+  allow_recursive_operations: false
+
+audit:
+  enabled: true
+  user_path: ~/.local/state/permguard/audit.jsonl
+  root_path: /var/log/permguard/audit.jsonl
+  mode: "0600"

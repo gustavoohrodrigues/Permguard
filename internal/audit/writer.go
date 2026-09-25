@@ -1,0 +1,50 @@
+package audit
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/gustavoohrodrigues/permguard/internal/domain"
+)
+
+type Writer struct{ Path string }
+
+func Path(userPath, rootPath string, root bool) (string, error) {
+	value := userPath
+	if root {
+		value = rootPath
+	}
+	if strings.HasPrefix(value, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		value = filepath.Join(home, strings.TrimPrefix(value, "~/"))
+	}
+	return filepath.Abs(value)
+}
+
+func (w Writer) Append(record domain.AuditRecord) error {
+	if err := os.MkdirAll(filepath.Dir(w.Path), 0o700); err != nil {
+		return fmt.Errorf("falha_auditoria: %w", err)
+	}
+	file, err := os.OpenFile(w.Path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) // #nosec G304 -- destino configurado pelo operador.
+	if err != nil {
+		return fmt.Errorf("falha_auditoria: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	if err := file.Chmod(0o600); err != nil {
+		return fmt.Errorf("falha_auditoria: %w", err)
+	}
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(append(encoded, '\n')); err != nil {
+		return fmt.Errorf("falha_auditoria: %w", err)
+	}
+	return file.Sync()
+}
