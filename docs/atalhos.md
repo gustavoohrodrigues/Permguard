@@ -9,10 +9,12 @@
 | `?` | ajuda |
 | `Tab`, `←`, `→` | alternar telas |
 | `j/k`, `↑/↓` | navegar |
+| `PgUp/PgDn`, `Ctrl+u/Ctrl+d` | mudar uma página compacta por vez |
+| `Home/End` | primeiro ou último item |
 | `Enter` | abrir diretório ou detalhes |
 | `Backspace` | diretório pai |
 | `g` | caminho manual |
-| `/` | filtro local |
+| `/` | filtro local ou abertura de caminho absoluto, como `/etc` |
 | `c` | limpar filtro |
 | `r` | atualizar |
 | `m` | informar nova permissão e abrir o preview |

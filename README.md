@@ -218,8 +218,10 @@ Outros usuários (---): sem acesso.
 | `e` | Alternar tópico na aba Explicações |
 | `Enter` | Abrir diretório ou detalhes |
 | `Backspace` | Diretório pai |
+| `PgUp/PgDn` ou `Ctrl+u/Ctrl+d` | Navegar por páginas compactas em diretórios grandes |
+| `Home/End` | Ir ao primeiro ou ao último item |
 | `g` | Informar caminho |
-| `/` | Filtrar itens carregados |
+| `/` | Filtrar itens carregados ou abrir um caminho absoluto, como `/etc` |
 | `c` | Limpar filtro |
 | `r` | Atualizar |
 | `m` | Informar uma nova permissão para o item selecionado |

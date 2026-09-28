@@ -88,6 +88,7 @@ type Model struct {
 	themeName, filterType, sortMode    string
 	entries                            []domain.DirectoryEntry
 	diskUsage                          domain.DiskUsage
+	directoryCursors                   map[string]int
 	auditRecords                       []domain.AuditRecord
 	selected                           *domain.FileMetadata
 	input                              textinput.Model
@@ -121,7 +122,7 @@ func NewModel(deps Dependencies) Model {
 	}
 	colors := deps.Config.Display.ColorMode != "none" && deps.Config.Display.ColorMode != "sem_cor"
 	unicode := deps.Config.Display.Unicode != "off" && deps.Config.Display.Unicode != "false"
-	return Model{deps: deps, styles: theme(themeName, colors, unicode), themeName: themeName, colors: colors, unicode: unicode, filterType: "all", sortMode: "size", path: absolute, status: deps.Catalog.T("status.loading"), input: input, loading: true}
+	return Model{deps: deps, styles: theme(themeName, colors, unicode), themeName: themeName, colors: colors, unicode: unicode, filterType: "all", sortMode: "size", path: absolute, status: deps.Catalog.T("status.loading"), input: input, loading: true, directoryCursors: make(map[string]int)}
 }
 
 func (m Model) Init() tea.Cmd { return m.load(m.path) }
@@ -159,11 +160,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = m.translateError(msg.err)
 			return m, nil
 		}
-		m.path, m.entries, m.diskUsage, m.cursor, m.filter = msg.path, msg.entries, msg.usage, 0, ""
-		if len(m.entries) > 0 {
-			selected := m.entries[0].Metadata
-			m.selected = &selected
+		m.path, m.entries, m.diskUsage, m.filter = msg.path, msg.entries, msg.usage, ""
+		m.cursor = m.directoryCursors[msg.path]
+		if m.cursor >= len(m.entries) {
+			m.cursor = max(0, len(m.entries)-1)
 		}
+		m.syncSelection()
 		m.status = m.deps.Catalog.T("status.ready")
 	case appliedMsg:
 		m.loading = false
@@ -246,6 +248,14 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.move(-1)
 	case "down", "j":
 		m.move(1)
+	case "pgup", "ctrl+u":
+		m.move(-m.browserPageSize())
+	case "pgdown", "ctrl+d":
+		m.move(m.browserPageSize())
+	case "home":
+		m.moveTo(0)
+	case "end":
+		m.moveTo(len(m.visibleEntries()) - 1)
 	case "enter":
 		if m.screen == 5 && m.pending != nil {
 			m.inputMode = inputConfirmation
@@ -371,6 +381,22 @@ func (m *Model) move(delta int) {
 	}
 	selected := visible[m.cursor].Metadata
 	m.selected = &selected
+	m.directoryCursors[m.path] = m.cursor
+}
+
+func (m *Model) moveTo(position int) {
+	visible := m.visibleEntries()
+	if len(visible) == 0 {
+		return
+	}
+	m.cursor = min(max(position, 0), len(visible)-1)
+	selected := visible[m.cursor].Metadata
+	m.selected = &selected
+	m.directoryCursors[m.path] = m.cursor
+}
+
+func (m Model) browserPageSize() int {
+	return min(12, max(3, m.height-13))
 }
 
 func (m Model) openSelected() (tea.Model, tea.Cmd) {
@@ -464,6 +490,10 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 			return m, m.editFileCmd()
 		}
 		return m, m.applyPending()
+	}
+	if mode == inputSearch && filepath.IsAbs(value) {
+		m.loading = true
+		return m, m.load(filepath.Clean(value))
 	}
 	m.filter = value
 	m.cursor = 0
@@ -850,13 +880,10 @@ func (m Model) browser(height, width int) string {
 	}
 	nameWidth := max(14, listWidth-35)
 	lines := []string{m.styles.muted.Render(m.deps.Catalog.T("browser.list_header"))}
-	maxRows := height - lipgloss.Height(heading) - 5
-	if maxRows < 2 {
-		maxRows = 2
-	}
+	maxRows := min(12, max(3, height-lipgloss.Height(heading)-7))
 	start := 0
-	if m.cursor >= maxRows {
-		start = m.cursor - maxRows + 1
+	if maxRows > 0 {
+		start = (m.cursor / maxRows) * maxRows
 	}
 	for idx, item := range visible[start:min(start+maxRows, len(visible))] {
 		actual := start + idx
@@ -884,12 +911,17 @@ func (m Model) browser(height, width int) string {
 	if len(visible) == 0 {
 		lines = append(lines, m.styles.warning.Render(m.deps.Catalog.T("label.none")))
 	}
+	page, pages := 0, 0
+	if len(visible) > 0 {
+		page, pages = start/maxRows+1, (len(visible)+maxRows-1)/maxRows
+	}
+	lines = append(lines, m.styles.muted.Render(m.deps.Catalog.T("browser.position", min(m.cursor+1, len(visible)), len(visible), page, pages)))
 	status := m.status
 	if m.loading {
 		status = m.deps.Catalog.T("status.loading")
 	}
 	lines = append(lines, "", m.styles.muted.Render(status+" · "+m.deps.Catalog.T("label.filter")+": "+emptyAs(m.filter, m.deps.Catalog.T("label.none"))+" · "+m.deps.Catalog.T("label.sort")+": "+m.deps.Catalog.T("sort."+m.sortMode)))
-	panelHeight := max(6, height-lipgloss.Height(heading)-2)
+	panelHeight := maxRows + 4
 	if !wide {
 		return heading + "\n" + m.styles.panel.Width(width-4).Height(panelHeight-2).Render(strings.Join(lines, "\n"))
 	}

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,6 +70,40 @@ func TestNavegacaoEntreTelas(t *testing.T) {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
 	if updated.(Model).screen != 1 {
 		t.Fatal("tela navegador não selecionada")
+	}
+}
+
+func TestNavegadorCompactoPaginaDiretorioGrande(t *testing.T) {
+	m := testModel(t)
+	m.width, m.height, m.screen = 120, 40, 1
+	for index := range 40 {
+		m.entries = append(m.entries, domain.DirectoryEntry{Metadata: domain.FileMetadata{
+			Name: fmt.Sprintf("arquivo-%02d", index), Path: fmt.Sprintf("/dados/arquivo-%02d", index), Type: domain.TypeRegular,
+		}})
+	}
+	m.syncSelection()
+	m.move(24)
+	view := m.browser(32, 120)
+	if !strings.Contains(view, "Item 25/40") || !strings.Contains(view, "página 3/4") {
+		t.Fatalf("posição da página não foi exibida: %s", view)
+	}
+	if strings.Count(view, "arquivo-") > 13 {
+		t.Fatalf("navegador exibiu itens demais em uma única página")
+	}
+}
+
+func TestPesquisaComCaminhoAbsolutoAbreDiretorio(t *testing.T) {
+	m := testModel(t)
+	target := t.TempDir()
+	m.inputMode = inputSearch
+	m.input.SetValue(target)
+	_, cmd := m.submitInput()
+	if cmd == nil {
+		t.Fatal("caminho absoluto deveria iniciar carregamento")
+	}
+	msg, ok := cmd().(loadedMsg)
+	if !ok || msg.err != nil || msg.path != target {
+		t.Fatalf("diretório não foi carregado: %#v", msg)
 	}
 }
 

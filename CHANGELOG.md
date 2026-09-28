@@ -2,6 +2,7 @@
 
 ## Não publicado
 
+- torna o navegador compacto e paginado, restaura a posição por diretório e aceita caminhos absolutos na pesquisa;
 - redesenha o navegador com inspiração no ncdu, uso do filesystem, barras de tamanho e painel contextual;
 - adiciona abertura confirmada de arquivos regulares no Vim com suspensão e restauração da TUI;
 - restringe o editor a vim/nvim/vi, sem shell, sem symlinks e sem conteúdo na auditoria;
