@@ -5,7 +5,7 @@
 | `1` | visão geral/privilégio |
 | `2` | navegador |
 | `3`, `p` | detalhes |
-| `4` | explicação de permissões |
+| `4` | explicações sobre permissões, ownership e segurança |
 | `?` | ajuda |
 | `Tab`, `←`, `→` | alternar telas |
 | `j/k`, `↑/↓` | navegar |
@@ -16,9 +16,13 @@
 | `c` | limpar filtro |
 | `r` | atualizar |
 | `m` | informar nova permissão e abrir o preview |
+| `o` | informar novo proprietário e abrir o preview |
+| `G` | informar novo grupo e abrir o preview |
+| `v` | revisar e abrir arquivo regular no editor configurado (Vim por padrão) |
 | `f` | alternar filtro de tipo |
 | `s` | alternar ordenação |
 | `a` | abrir auditoria |
+| `e` | avançar para o próximo tópico na tela de explicações |
 | `t` | alternar tema |
 | `u` | alternar Unicode |
 | `C` | alternar cores |
@@ -26,4 +30,4 @@
 | `Esc` | voltar ao navegador |
 | `q` | sair |
 
-Atalhos de owner/group (`o`, `G`), auditoria visual (`a`) e exportação (`e`) serão habilitados quando os fluxos seguros correspondentes existirem.
+As operações mutáveis exigem `--permitir-alteracoes`, preview e a confirmação digitada `ALTERAR`. O editor não abre diretórios nem links simbólicos e nunca é executado por meio de um shell.

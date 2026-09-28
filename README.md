@@ -68,6 +68,8 @@ Implementado:
 - Preview, confirmação digitada, revalidação anti-TOCTOU e auditoria JSONL `0600`.
 - Temas Midnight, Nord, Gruvbox Dark, Dracula e High Contrast.
 - Modo sem cores, bordas ASCII, filtros por tipo e ordenação da listagem.
+- Navegador inspirado no ncdu, com uso do filesystem, barras de tamanho e painel contextual.
+- Edição confirmada de arquivos regulares com Vim, sem seguir symlinks ou executar shell.
 - Tela de auditoria e menu de ajuda contextual dentro da TUI.
 
 Não implementado: relatórios, ACL/SELinux/capabilities mutáveis e recursão. Consulte [o roadmap](docs/roadmap.md).
@@ -77,6 +79,7 @@ Não implementado: relatórios, ACL/SELinux/capabilities mutáveis e recursão. 
 - Linux.
 - Go 1.24 ou superior para desenvolvimento (requisito do Bubble Tea 1.3.10).
 - Terminal ANSI; cores e Unicode pertencem ao tema do primeiro incremento.
+- Vim instalado para usar a edição integrada; `nvim` e `vi` podem ser configurados.
 
 Distribuições-alvo: RHEL, Rocky, AlmaLinux, CentOS Stream, Fedora, Debian, Ubuntu, Mint, Arch, Proxmox VE e outros hosts Linux.
 
@@ -220,6 +223,7 @@ Outros usuários (---): sem acesso.
 | `c` | Limpar filtro |
 | `r` | Atualizar |
 | `m` | Informar uma nova permissão para o item selecionado |
+| `v` | Revisar e abrir arquivo regular no Vim para edição |
 | `o` | Alterar o proprietário do item selecionado; exige root |
 | `G` | Alterar somente o grupo proprietário |
 | `f` | Alternar filtro: todos, diretórios, arquivos e links |
@@ -277,6 +281,26 @@ O PermGuard usa lookup do sistema para validar usuário e grupo. A mudança é f
 
 Esses fluxos não varrem toda a árvore e não seguem symlinks automaticamente.
 
+## Navegador e edição com Vim
+
+O navegador apresenta o uso real do filesystem, quantidade de diretórios, arquivos e links, soma dos arquivos da listagem atual e barras relativas de tamanho. Em terminais amplos, um painel lateral mantém os metadados e ações do item selecionado visíveis. O consumo de diretórios ainda não é calculado recursivamente; eles aparecem como `<DIR>` para não confundir tamanho de metadados com espaço total ocupado.
+
+Para editar um arquivo:
+
+```bash
+permguard --permitir-alteracoes
+```
+
+1. Abra o navegador com `2` e selecione um arquivo regular.
+2. Pressione `v`.
+3. Revise caminho, tipo, tamanho, modo e editor.
+4. Pressione `Enter` e digite `ALTERAR`.
+5. A TUI será suspensa enquanto o Vim estiver aberto e restaurada ao sair.
+
+O editor é iniciado diretamente, sem shell e com o caminho como argumento separado. Links simbólicos, diretórios, tipos especiais, filesystems read-only e caminhos bloqueados não são abertos. A auditoria registra que o editor foi iniciado e seu resultado, mas nunca registra o conteúdo do arquivo.
+
+O arquivo é revalidado imediatamente antes de abrir o editor. Como o Vim é externo e reabre o caminho, a edição não possui a mesma garantia anti-TOCTOU por descritor de `chmod`, `chown` e `chgrp`; evite esse recurso em diretórios graváveis por usuários não confiáveis.
+
 ## Temas e acessibilidade
 
 Pressione `t` para percorrer `midnight`, `nord`, `gruvbox-dark`, `dracula` e `high-contrast`. `C` ativa ou desativa cores e `u` alterna entre bordas Unicode e ASCII. O menu completo pode ser aberto a qualquer momento com `?` ou `h`.
@@ -306,6 +330,15 @@ Exemplos: `755` compartilhamento somente para leitura/execução por grupo e out
 O primeiro dígito especial pode combinar `4` (SUID), `2` (SGID) e `1` (sticky). Consulte [permissões](docs/permissoes.md).
 
 ## Configuração e idioma
+
+Editor padrão:
+
+```yaml
+editor:
+  command: vim
+```
+
+São aceitos `vim`, `nvim` e `vi`. Argumentos adicionais e comandos de shell não são aceitos.
 
 ```bash
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/permguard"

@@ -21,6 +21,26 @@ import (
 
 type Inspector struct{}
 
+func (Inspector) DiskUsage(path string) (domain.DiskUsage, error) {
+	var stat unix.Statfs_t
+	if err := unix.Statfs(path, &stat); err != nil {
+		return domain.DiskUsage{}, fmt.Errorf("falha_uso_disco: %w", err)
+	}
+	if stat.Bsize <= 0 {
+		return domain.DiskUsage{}, fmt.Errorf("falha_uso_disco")
+	}
+	// #nosec G115 -- Bsize foi validado como positivo e é definido pelo kernel.
+	blockSize := uint64(stat.Bsize)
+	total := stat.Blocks * blockSize
+	available := stat.Bavail * blockSize
+	used := total - stat.Bfree*blockSize
+	percent := 0.0
+	if total > 0 {
+		percent = float64(used) * 100 / float64(total)
+	}
+	return domain.DiskUsage{TotalBytes: total, UsedBytes: used, AvailableBytes: available, UsedPercent: percent}, nil
+}
+
 func (Inspector) Inspect(path string) (domain.FileMetadata, error) {
 	absolute, err := filepath.Abs(filepath.Clean(path))
 	if err != nil {

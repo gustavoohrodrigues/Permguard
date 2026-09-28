@@ -91,3 +91,13 @@ func TestReadDirNaoSegueLinkParaDiretorio(t *testing.T) {
 		}
 	}
 }
+
+func TestDiskUsageRetornaCapacidadeCoerente(t *testing.T) {
+	usage, err := (Inspector{}).DiskUsage(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.TotalBytes == 0 || usage.UsedBytes > usage.TotalBytes || usage.UsedPercent < 0 || usage.UsedPercent > 100 {
+		t.Fatalf("uso incoerente: %+v", usage)
+	}
+}

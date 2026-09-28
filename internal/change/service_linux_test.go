@@ -131,6 +131,23 @@ func TestCancelaQuandoInodeMuda(t *testing.T) {
 	}
 }
 
+func TestRevalidateCancelaQuandoMetadadosMudam(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "arquivo")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inspector := filesystem.Inspector{}
+	metadata, err := inspector.Inspect(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata.Inode++
+	err = (Service{}).Revalidate(metadata)
+	if err == nil || !strings.Contains(err.Error(), "alvo_alterado") {
+		t.Fatalf("revalidação deveria cancelar: %v", err)
+	}
+}
+
 func TestBloqueiaSymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "alvo")

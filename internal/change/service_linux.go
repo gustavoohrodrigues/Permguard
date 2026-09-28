@@ -17,6 +17,22 @@ import (
 
 type Service struct{ Inspector filesystem.Inspector }
 
+func (s Service) Revalidate(expected domain.FileMetadata) error {
+	if err := s.validateTarget(expected); err != nil {
+		return err
+	}
+	fd, err := unix.Open(expected.Path, unix.O_PATH|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return fmt.Errorf("falha_abertura_segura: %w", err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		return fmt.Errorf("falha_revalidacao: %w", err)
+	}
+	return revalidate(stat, expected)
+}
+
 func (s Service) Validate(metadata domain.FileMetadata, effectiveUID int) error {
 	if err := s.validateTarget(metadata); err != nil {
 		return err

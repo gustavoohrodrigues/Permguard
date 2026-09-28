@@ -11,7 +11,7 @@ func TestPadraoSemArquivo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Language != "pt-BR" || !cfg.Security.AllowReadOnlyMode {
+	if cfg.Language != "pt-BR" || !cfg.Security.AllowReadOnlyMode || cfg.Editor.Command != "vim" {
 		t.Fatalf("config: %+v", cfg)
 	}
 }

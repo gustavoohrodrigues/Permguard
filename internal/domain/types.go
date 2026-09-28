@@ -34,6 +34,13 @@ type FilesystemInfo struct {
 	ReadOnly bool
 }
 
+type DiskUsage struct {
+	TotalBytes     uint64
+	UsedBytes      uint64
+	AvailableBytes uint64
+	UsedPercent    float64
+}
+
 type FileMetadata struct {
 	Path, ResolvedPath, Name string
 	Type                     FileType

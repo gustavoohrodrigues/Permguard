@@ -33,7 +33,7 @@ func theme(name string, colors, unicode bool) styles {
 	accent, foreground, background := lipgloss.Color(p.accent), lipgloss.Color(p.foreground), lipgloss.Color(p.background)
 	return styles{
 		header: lipgloss.NewStyle().Bold(true).Foreground(background).Background(accent).Padding(0, 1),
-		tab:    lipgloss.NewStyle().Foreground(lipgloss.Color(p.muted)).Padding(0, 1), activeTab: lipgloss.NewStyle().Bold(true).Foreground(accent).Padding(0, 1),
+		tab:    lipgloss.NewStyle().Foreground(lipgloss.Color(p.muted)).Padding(0, 1), activeTab: lipgloss.NewStyle().Bold(true).Foreground(accent).Background(lipgloss.Color(p.surface)).Padding(0, 1),
 		panel: lipgloss.NewStyle().Border(border).BorderForeground(accent).Foreground(foreground).Padding(0, 1), title: lipgloss.NewStyle().Bold(true).Foreground(accent),
 		selected: lipgloss.NewStyle().Bold(true).Foreground(background).Background(accent), muted: lipgloss.NewStyle().Foreground(lipgloss.Color(p.muted)),
 		success: lipgloss.NewStyle().Foreground(lipgloss.Color(p.success)), warning: lipgloss.NewStyle().Foreground(lipgloss.Color(p.warning)), danger: lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(p.danger)),

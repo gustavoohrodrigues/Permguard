@@ -24,3 +24,6 @@ audit:
   user_path: ~/.local/state/permguard/audit.jsonl
   root_path: /var/log/permguard/audit.jsonl
   mode: "0600"
+
+editor:
+  command: vim

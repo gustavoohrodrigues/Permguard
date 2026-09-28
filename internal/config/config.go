@@ -35,6 +35,9 @@ type Config struct {
 		RootPath string `yaml:"root_path"`
 		Mode     string `yaml:"mode"`
 	} `yaml:"audit"`
+	Editor struct {
+		Command string `yaml:"command"`
+	} `yaml:"editor"`
 }
 
 func Default() Config {
@@ -55,6 +58,7 @@ func Default() Config {
 	c.Audit.UserPath = "~/.local/state/permguard/audit.jsonl"
 	c.Audit.RootPath = "/var/log/permguard/audit.jsonl"
 	c.Audit.Mode = "0600"
+	c.Editor.Command = "vim"
 	return c
 }
 
@@ -85,6 +89,9 @@ func Load(path string) (Config, error) {
 	}
 	if c.Language == "" {
 		c.Language = "pt-BR"
+	}
+	if c.Editor.Command == "" {
+		c.Editor.Command = "vim"
 	}
 	return c, nil
 }

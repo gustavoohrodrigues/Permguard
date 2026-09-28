@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 	"github.com/gustavoohrodrigues/permguard/internal/audit"
 	"github.com/gustavoohrodrigues/permguard/internal/config"
 	"github.com/gustavoohrodrigues/permguard/internal/domain"
+	fileeditor "github.com/gustavoohrodrigues/permguard/internal/editor"
 	"github.com/gustavoohrodrigues/permguard/internal/filesystem"
 	"github.com/gustavoohrodrigues/permguard/internal/i18n"
 	"github.com/gustavoohrodrigues/permguard/internal/identity"
@@ -24,6 +26,7 @@ import (
 
 type ModeChanger interface {
 	Validate(domain.FileMetadata, int) error
+	Revalidate(domain.FileMetadata) error
 	ApplyMode(domain.FileMetadata, os.FileMode, int) error
 	ValidateOwner(domain.FileMetadata, domain.PrivilegeInfo) error
 	ValidateGroup(domain.FileMetadata, int, domain.PrivilegeInfo) error
@@ -47,6 +50,7 @@ type Dependencies struct {
 type loadedMsg struct {
 	path    string
 	entries []domain.DirectoryEntry
+	usage   domain.DiskUsage
 	err     error
 }
 type inputMode int
@@ -70,6 +74,10 @@ type auditLoadedMsg struct {
 	records []domain.AuditRecord
 	err     error
 }
+type editorFinishedMsg struct {
+	metadata domain.FileMetadata
+	err      error
+}
 
 type Model struct {
 	deps                               Dependencies
@@ -79,6 +87,7 @@ type Model struct {
 	path, filter, status               string
 	themeName, filterType, sortMode    string
 	entries                            []domain.DirectoryEntry
+	diskUsage                          domain.DiskUsage
 	auditRecords                       []domain.AuditRecord
 	selected                           *domain.FileMetadata
 	input                              textinput.Model
@@ -112,7 +121,7 @@ func NewModel(deps Dependencies) Model {
 	}
 	colors := deps.Config.Display.ColorMode != "none" && deps.Config.Display.ColorMode != "sem_cor"
 	unicode := deps.Config.Display.Unicode != "off" && deps.Config.Display.Unicode != "false"
-	return Model{deps: deps, styles: theme(themeName, colors, unicode), themeName: themeName, colors: colors, unicode: unicode, filterType: "all", sortMode: "name", path: absolute, status: deps.Catalog.T("status.loading"), input: input, loading: true}
+	return Model{deps: deps, styles: theme(themeName, colors, unicode), themeName: themeName, colors: colors, unicode: unicode, filterType: "all", sortMode: "size", path: absolute, status: deps.Catalog.T("status.loading"), input: input, loading: true}
 }
 
 func (m Model) Init() tea.Cmd { return m.load(m.path) }
@@ -120,7 +129,8 @@ func (m Model) Init() tea.Cmd { return m.load(m.path) }
 func (m Model) load(path string) tea.Cmd {
 	return func() tea.Msg {
 		entries, err := m.deps.Inspector.ReadDir(path)
-		return loadedMsg{path: path, entries: entries, err: err}
+		usage, _ := m.deps.Inspector.DiskUsage(path)
+		return loadedMsg{path: path, entries: entries, usage: usage, err: err}
 	}
 }
 
@@ -149,7 +159,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = m.translateError(msg.err)
 			return m, nil
 		}
-		m.path, m.entries, m.cursor, m.filter = msg.path, msg.entries, 0, ""
+		m.path, m.entries, m.diskUsage, m.cursor, m.filter = msg.path, msg.entries, msg.usage, 0, ""
 		if len(m.entries) > 0 {
 			selected := m.entries[0].Metadata
 			m.selected = &selected
@@ -172,6 +182,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.auditRecords = msg.records
 			m.status = m.deps.Catalog.T("status.audit_loaded", len(msg.records))
+		}
+	case editorFinishedMsg:
+		m.loading = false
+		m.pending = nil
+		if msg.err != nil {
+			m.status = m.translateError(msg.err)
+		} else {
+			m.selected = &msg.metadata
+			m.screen = 2
+			m.status = m.deps.Catalog.T("status.editor_closed")
 		}
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -241,6 +261,8 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.startOwnershipEdit(true)
 	case "G":
 		return m.startOwnershipEdit(false)
+	case "v":
+		return m.startFileEdit()
 	case "backspace":
 		parent := filepath.Dir(m.path)
 		if parent != m.path {
@@ -438,6 +460,9 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loading = true
+		if m.pendingOperation == "edit" {
+			return m, m.editFileCmd()
+		}
 		return m, m.applyPending()
 	}
 	m.filter = value
@@ -449,6 +474,64 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 		m.selected = &selected
 	}
 	return m, nil
+}
+
+func (m Model) startFileEdit() (tea.Model, tea.Cmd) {
+	if !m.deps.AllowWrites {
+		m.status = m.deps.Catalog.T("error.escrita_nao_habilitada")
+		return m, nil
+	}
+	if m.selected == nil || m.deps.Changer == nil {
+		m.status = m.deps.Catalog.T("error.nenhum_item_selecionado")
+		return m, nil
+	}
+	if err := fileeditor.ValidateTarget(*m.selected); err != nil {
+		m.status = m.translateError(err)
+		return m, nil
+	}
+	if err := m.deps.Changer.Validate(*m.selected, m.deps.Privilege.EffectiveUID); err != nil {
+		m.status = m.translateError(err)
+		return m, nil
+	}
+	metadata := *m.selected
+	m.pending = &metadata
+	m.pendingOperation = "edit"
+	m.screen = 5
+	m.status = m.deps.Catalog.T("status.preview_ready")
+	return m, nil
+}
+
+func (m Model) editFileCmd() tea.Cmd {
+	expected := *m.pending
+	if err := m.deps.Changer.Revalidate(expected); err != nil {
+		return func() tea.Msg { return editorFinishedMsg{err: err} }
+	}
+	binary, err := fileeditor.Resolve(m.deps.Config.Editor.Command)
+	if err != nil {
+		return func() tea.Msg { return editorFinishedMsg{err: err} }
+	}
+	command := exec.Command(binary, "--", expected.Path) // #nosec G204 -- editor resolvido por allowlist e caminho enviado como argumento separado.
+	return tea.ExecProcess(command, func(processErr error) tea.Msg {
+		result, errorText := "sucesso", ""
+		if processErr != nil {
+			result, errorText = "indeterminado", processErr.Error()
+		}
+		updated := expected
+		current, inspectErr := m.deps.Inspector.Inspect(expected.Path)
+		if inspectErr == nil {
+			updated = current
+		}
+		if inspectErr != nil && processErr == nil {
+			processErr = fmt.Errorf("alteracao_concluida_reinspecao_falhou: %w", inspectErr)
+		}
+		record := domain.AuditRecord{Timestamp: time.Now(), OperatorUser: m.deps.Privilege.User, OperatorUID: m.deps.Privilege.EffectiveUID, TargetPath: expected.Path, TargetType: expected.Type, Operation: "editar", PreviousMode: expected.Mode.NumericMode, NewMode: updated.Mode.NumericMode, PreviousOwner: expected.Owner.Name, NewOwner: updated.Owner.Name, PreviousGroup: expected.Group.Name, NewGroup: updated.Group.Name, Result: result, Error: errorText, SymlinkDetected: expected.IsSymlink}
+		if m.deps.Audit != nil {
+			if auditErr := m.deps.Audit.Append(record); auditErr != nil && processErr == nil {
+				processErr = auditErr
+			}
+		}
+		return editorFinishedMsg{metadata: updated, err: processErr}
+	})
 }
 
 func (m Model) startPermissionEdit() (tea.Model, tea.Cmd) {
@@ -560,9 +643,16 @@ func (m Model) visibleEntries() []domain.DirectoryEntry {
 	}
 	sort.SliceStable(result, func(i, j int) bool {
 		a, b := result[i].Metadata, result[j].Metadata
+		aDirectory, bDirectory := a.Type == domain.TypeDirectory, b.Type == domain.TypeDirectory
+		if aDirectory != bDirectory {
+			return aDirectory
+		}
+		if aDirectory && bDirectory && m.sortMode == "size" {
+			return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+		}
 		switch m.sortMode {
 		case "size":
-			return a.Size < b.Size
+			return a.Size > b.Size
 		case "mode":
 			return a.Mode.NumericMode < b.Mode.NumericMode
 		case "modified":
@@ -606,7 +696,20 @@ func (m Model) View() string {
 	default:
 		body = m.help(contentHeight, width)
 	}
-	footer := m.styles.footer.Width(width - 4).Render(m.deps.Catalog.T("footer.keys"))
+	footerKey := "footer.keys"
+	switch m.screen {
+	case 1:
+		footerKey = "footer.browser"
+	case 2:
+		footerKey = "footer.details"
+	case 3:
+		footerKey = "footer.explanations"
+	case 4:
+		footerKey = "footer.audit"
+	case 5:
+		footerKey = "footer.preview"
+	}
+	footer := m.styles.footer.Width(width - 4).Render(m.deps.Catalog.T(footerKey))
 	if m.inputMode != inputNone {
 		prompt := m.deps.Catalog.T("label.search_input")
 		switch m.inputMode {
@@ -647,6 +750,11 @@ func (m Model) changePreview(height, width int) string {
 		current = m.pending.Group.Name + " (GID " + m.pending.Group.GID + ")"
 		proposed = m.pendingGroupName + " (GID " + strconv.Itoa(*m.pendingGroup) + ")"
 		impact = m.deps.Catalog.T("change.impact.group")
+	case "edit":
+		title = m.deps.Catalog.T("change.preview_edit_title")
+		current = m.deps.Catalog.T("change.file_current", humanSize(m.pending.Size), m.pending.Mode.NumericMode)
+		proposed = m.deps.Catalog.T("change.editor_proposed", m.deps.Config.Editor.Command)
+		impact = m.deps.Catalog.T("change.impact.edit")
 	}
 	lines := []string{
 		m.styles.danger.Render(title), "",
@@ -715,21 +823,59 @@ func (m Model) overview(height, width int) string {
 
 func (m Model) browser(height, width int) string {
 	visible := m.visibleEntries()
-	lines := []string{m.styles.title.Render(m.deps.Catalog.T("screen.browser") + ": " + m.path), m.styles.muted.Render(m.deps.Catalog.T("table.header"))}
-	max := height - 5
-	start := 0
-	if m.cursor >= max {
-		start = m.cursor - max + 1
+	directories, files, links := 0, 0, 0
+	var fileBytes, largest int64
+	for _, item := range visible {
+		switch item.Metadata.Type {
+		case domain.TypeDirectory:
+			directories++
+		case domain.TypeRegular:
+			files++
+			fileBytes += item.Metadata.Size
+			if item.Metadata.Size > largest {
+				largest = item.Metadata.Size
+			}
+		case domain.TypeSymlink:
+			links++
+		case domain.TypeSocket, domain.TypeFIFO, domain.TypeBlock, domain.TypeCharacter, domain.TypeUnknown:
+			// Tipos especiais aparecem na lista, mas não entram na soma dos arquivos comuns.
+		}
 	}
-	for idx, item := range visible[start:min(start+max, len(visible))] {
+	usage := fmt.Sprintf("%s  %s  %.1f%%  %s", m.deps.Catalog.T("disk.usage"), diskBar(m.diskUsage.UsedPercent, 22, m.unicode), m.diskUsage.UsedPercent, m.deps.Catalog.T("disk.summary", humanSizeUnsigned(m.diskUsage.UsedBytes), humanSizeUnsigned(m.diskUsage.TotalBytes), humanSizeUnsigned(m.diskUsage.AvailableBytes)))
+	heading := m.styles.title.Render(m.deps.Catalog.T("screen.browser")) + "  " + m.styles.muted.Render(m.path) + "\n" + usage + "\n" + m.styles.muted.Render(m.deps.Catalog.T("browser.summary", directories, files, links, humanSize(fileBytes)))
+	listWidth := width
+	wide := width >= 100
+	if wide {
+		listWidth = width * 63 / 100
+	}
+	nameWidth := max(14, listWidth-35)
+	lines := []string{m.styles.muted.Render(m.deps.Catalog.T("browser.list_header"))}
+	maxRows := height - lipgloss.Height(heading) - 5
+	if maxRows < 2 {
+		maxRows = 2
+	}
+	start := 0
+	if m.cursor >= maxRows {
+		start = m.cursor - maxRows + 1
+	}
+	for idx, item := range visible[start:min(start+maxRows, len(visible))] {
 		actual := start + idx
 		md := item.Metadata
-		marker := "  "
+		marker := " "
 		if actual == m.cursor {
-			marker = "▶ "
+			marker = ">"
+			if m.unicode {
+				marker = "▸"
+			}
 		}
 		icon := typeIcon(md.Type)
-		line := fmt.Sprintf("%s%-4s %-28s %-14s %-14s %-10s %8s", marker, icon, truncate(md.Name, 28), truncate(md.Owner.Name, 14), truncate(md.Group.Name, 14), md.Mode.NumericMode, humanSize(md.Size))
+		name, size, bar := md.Name, humanSize(md.Size), ""
+		if md.Type == domain.TypeDirectory {
+			name, size = md.Name+"/", m.deps.Catalog.T("label.directory")
+		} else if md.Type == domain.TypeRegular && largest > 0 {
+			bar = sizeBar(float64(md.Size)/float64(largest), 8, m.unicode)
+		}
+		line := fmt.Sprintf("%s %-3s %-*s %8s %-8s %s", marker, icon, nameWidth, truncate(name, nameWidth), size, md.Mode.NumericMode, bar)
 		if actual == m.cursor {
 			line = m.styles.selected.Render(line)
 		}
@@ -742,8 +888,35 @@ func (m Model) browser(height, width int) string {
 	if m.loading {
 		status = m.deps.Catalog.T("status.loading")
 	}
-	lines = append(lines, "", m.styles.muted.Render(status+" · "+m.deps.Catalog.T("label.filter")+": "+emptyAs(m.filter, m.deps.Catalog.T("label.none"))+" · "+m.deps.Catalog.T("label.type")+": "+m.deps.Catalog.T("filter."+m.filterType)+" · "+m.deps.Catalog.T("label.sort")+": "+m.deps.Catalog.T("sort."+m.sortMode)))
-	return m.styles.panel.Width(width - 4).Height(height - 2).Render(strings.Join(lines, "\n"))
+	lines = append(lines, "", m.styles.muted.Render(status+" · "+m.deps.Catalog.T("label.filter")+": "+emptyAs(m.filter, m.deps.Catalog.T("label.none"))+" · "+m.deps.Catalog.T("label.sort")+": "+m.deps.Catalog.T("sort."+m.sortMode)))
+	panelHeight := max(6, height-lipgloss.Height(heading)-2)
+	if !wide {
+		return heading + "\n" + m.styles.panel.Width(width-4).Height(panelHeight-2).Render(strings.Join(lines, "\n"))
+	}
+	leftOuter := listWidth
+	rightOuter := width - leftOuter
+	left := m.styles.panel.Width(leftOuter - 4).Height(panelHeight - 2).Render(strings.Join(lines, "\n"))
+	right := m.styles.panel.Width(rightOuter - 4).Height(panelHeight - 2).Render(m.browserDetails())
+	return heading + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+}
+
+func (m Model) browserDetails() string {
+	if m.selected == nil {
+		return m.styles.muted.Render(m.deps.Catalog.T("browser.no_selection"))
+	}
+	md := *m.selected
+	lines := []string{
+		m.styles.title.Render(m.deps.Catalog.T("browser.selected")), "",
+		m.styles.success.Render(typeIcon(md.Type) + " " + md.Name), "",
+		kv(m.deps.Catalog.T("label.type"), m.deps.Catalog.T("type."+string(md.Type))),
+		kv(m.deps.Catalog.T("label.size"), humanSize(md.Size)),
+		kv(m.deps.Catalog.T("label.permissions"), md.Mode.NumericMode),
+		kv(m.deps.Catalog.T("label.owner"), md.Owner.Name),
+		kv(m.deps.Catalog.T("label.group"), md.Group.Name),
+		kv(m.deps.Catalog.T("label.modified"), md.ModifiedAt.Format("02/01/06 15:04")), "",
+		m.styles.muted.Render(m.deps.Catalog.T("browser.actions")),
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) auditView(height, width int) string {
@@ -896,6 +1069,43 @@ func humanSize(size int64) string {
 		return fmt.Sprintf("%d %s", size, units[unit])
 	}
 	return fmt.Sprintf("%.1f %s", value, units[unit])
+}
+func humanSizeUnsigned(size uint64) string {
+	if size > uint64(^uint64(0)>>1) {
+		return fmt.Sprintf("%.1f EiB", float64(size)/(1<<60))
+	}
+	return humanSize(int64(size))
+}
+func diskBar(percent float64, width int, unicode bool) string {
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	filled := int(percent * float64(width) / 100)
+	on, off := "#", "-"
+	if unicode {
+		on, off = "█", "░"
+	}
+	return "[" + strings.Repeat(on, filled) + strings.Repeat(off, width-filled) + "]"
+}
+func sizeBar(ratio float64, width int, unicode bool) string {
+	if ratio < 0 {
+		ratio = 0
+	}
+	if ratio > 1 {
+		ratio = 1
+	}
+	filled := int(ratio * float64(width))
+	if filled == 0 && ratio > 0 {
+		filled = 1
+	}
+	on, off := "=", " "
+	if unicode {
+		on, off = "▰", "·"
+	}
+	return strings.Repeat(on, filled) + strings.Repeat(off, width-filled)
 }
 func formatTime(value time.Time) string { return value.Format("02/01/2006 15:04:05 -07:00") }
 func kv(key, value string) string       { return fmt.Sprintf("%-22s %s", key+":", value) }

@@ -21,6 +21,7 @@ type fakeChanger struct {
 }
 
 func (f *fakeChanger) Validate(domain.FileMetadata, int) error { return nil }
+func (f *fakeChanger) Revalidate(domain.FileMetadata) error    { return nil }
 func (f *fakeChanger) ApplyMode(domain.FileMetadata, os.FileMode, int) error {
 	f.applied = true
 	return nil
@@ -195,5 +196,47 @@ func TestAuditoriaExibeMudancaDeOwnerEGrupo(t *testing.T) {
 	view := m.View()
 	if !strings.Contains(view, "root→app") || !strings.Contains(view, "app→web") {
 		t.Fatalf("mudanças de ownership ausentes: %s", view)
+	}
+}
+
+func TestNavegadorEstiloNcduExibeUsoEPainelSelecionado(t *testing.T) {
+	m := testModel(t)
+	m.width, m.height, m.screen = 120, 32, 1
+	m.loading = false
+	m.diskUsage = domain.DiskUsage{TotalBytes: 1000, UsedBytes: 500, AvailableBytes: 400, UsedPercent: 50}
+	m.entries = []domain.DirectoryEntry{{Metadata: domain.FileMetadata{Name: "dados.log", Path: "/srv/dados.log", Type: domain.TypeRegular, Size: 800, Mode: domain.PermissionInfo{NumericMode: "640"}, Owner: domain.UserIdentity{Name: "app"}, Group: domain.GroupIdentity{Name: "web"}}}}
+	selected := m.entries[0].Metadata
+	m.selected = &selected
+	view := m.View()
+	for _, expected := range []string{"Disco", "50.0%", "dados.log", "ITEM SELECIONADO", "PROPORÇÃO"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("elemento %q ausente: %s", expected, view)
+		}
+	}
+}
+
+func TestEdicaoDeArquivoExigePreviewEConfirmacao(t *testing.T) {
+	m := testModel(t)
+	path := filepath.Join(t.TempDir(), "arquivo.txt")
+	if err := os.WriteFile(path, []byte("fictício"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := m.deps.Inspector.Inspect(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.selected = &metadata
+	m.deps.Changer = &fakeChanger{}
+	m.deps.AllowWrites = true
+	m.deps.Privilege.EffectiveUID = syscall.Geteuid()
+	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v")})
+	m = updated.(Model)
+	if cmd != nil || m.screen != 5 || m.pendingOperation != "edit" || !strings.Contains(m.View(), "Confirmar abertura para edição") {
+		t.Fatalf("preview de edição inválido: %s", m.View())
+	}
+	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.inputMode != inputConfirmation {
+		t.Fatal("edição deveria exigir confirmação digitada")
 	}
 }
