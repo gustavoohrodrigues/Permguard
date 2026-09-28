@@ -68,6 +68,7 @@ type Model struct {
 	deps                               Dependencies
 	styles                             styles
 	width, height, screen, cursor      int
+	explanationTopic                   int
 	path, filter, status               string
 	themeName, filterType, sortMode    string
 	entries                            []domain.DirectoryEntry
@@ -181,6 +182,7 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.screen = 2
 	case "4":
 		m.screen = 3
+		m.explanationTopic = 0
 	case "5":
 		m.screen, m.loading = 4, true
 		return m, m.loadAudit()
@@ -205,6 +207,11 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cycleFilterType()
 	case "s":
 		m.cycleSort()
+	case "e":
+		if m.screen == 3 {
+			m.explanationTopic = (m.explanationTopic + 1) % 3
+			m.status = m.deps.Catalog.T("status.explanation_topic", m.explanationTopic+1, 3)
+		}
 	case "up", "k":
 		m.move(-1)
 	case "down", "j":
@@ -654,26 +661,60 @@ func (m Model) permissionView(height, width int) string {
 		return m.styles.panel.Width(width - 4).Height(height - 2).Render(m.deps.Catalog.T("label.none"))
 	}
 	info := m.selected.Mode
-	explanations := permissions.Explain(info, m.selected.Type == domain.TypeDirectory)
-	lines := []string{m.styles.title.Render(m.deps.Catalog.T("screen.permissions") + ": " + m.selected.Path), "", kv(m.deps.Catalog.T("label.numeric"), info.NumericMode), kv(m.deps.Catalog.T("label.symbolic"), info.SymbolicMode), ""}
-	for _, exp := range explanations {
-		lines = append(lines, m.styles.success.Render(m.deps.Catalog.T("scope."+exp.Scope)+" · "+exp.Bits))
-		for _, code := range exp.Codes {
-			lines = append(lines, "  • "+m.deps.Catalog.T(code))
+	lines := []string{m.styles.title.Render(m.deps.Catalog.T("screen.permissions") + ": " + m.selected.Path), m.styles.muted.Render(m.deps.Catalog.T("explanation.navigation", m.explanationTopic+1, 3)), ""}
+	switch m.explanationTopic {
+	case 1:
+		lines = append(lines,
+			m.styles.success.Render(m.deps.Catalog.T("explanation.ownership.title")), "",
+			kv(m.deps.Catalog.T("label.owner"), m.selected.Owner.Name+" (UID "+m.selected.Owner.UID+")"),
+			kv(m.deps.Catalog.T("label.group"), m.selected.Group.Name+" (GID "+m.selected.Group.GID+")"), "",
+			m.deps.Catalog.T("explanation.owner"),
+			m.deps.Catalog.T("explanation.group"),
+			m.deps.Catalog.T("explanation.others"), "",
+			m.styles.warning.Render(m.deps.Catalog.T("explanation.operations.title")),
+			m.deps.Catalog.T("explanation.chmod"),
+			m.deps.Catalog.T("explanation.chown"),
+			m.deps.Catalog.T("explanation.chgrp"),
+			m.deps.Catalog.T("explanation.acl"), "",
+			m.styles.danger.Render(m.deps.Catalog.T("explanation.availability")))
+	case 2:
+		lines = append(lines,
+			m.styles.success.Render(m.deps.Catalog.T("explanation.examples.title")), "",
+			m.deps.Catalog.T("explanation.example.mode"),
+			m.styles.muted.Render(m.deps.Catalog.T("explanation.example.mode.command")), "",
+			m.deps.Catalog.T("explanation.example.owner"),
+			m.styles.muted.Render(m.deps.Catalog.T("explanation.example.owner.command")), "",
+			m.deps.Catalog.T("explanation.example.group"),
+			m.styles.muted.Render(m.deps.Catalog.T("explanation.example.group.command1")),
+			m.styles.muted.Render(m.deps.Catalog.T("explanation.example.group.command2")), "",
+			m.deps.Catalog.T("explanation.example.both"),
+			m.styles.muted.Render(m.deps.Catalog.T("explanation.example.both.command")), "",
+			m.deps.Catalog.T("explanation.example.shared"),
+			m.styles.muted.Render(m.deps.Catalog.T("explanation.example.shared.command")), "",
+			m.styles.warning.Render(m.deps.Catalog.T("explanation.privilege")),
+			m.deps.Catalog.T("explanation.no_password"))
+	default:
+		explanations := permissions.Explain(info, m.selected.Type == domain.TypeDirectory)
+		lines = append(lines, kv(m.deps.Catalog.T("label.numeric"), info.NumericMode), kv(m.deps.Catalog.T("label.symbolic"), info.SymbolicMode), "")
+		for _, exp := range explanations {
+			lines = append(lines, m.styles.success.Render(m.deps.Catalog.T("scope."+exp.Scope)+" · "+exp.Bits))
+			for _, code := range exp.Codes {
+				lines = append(lines, "  • "+m.deps.Catalog.T(code))
+			}
 		}
-	}
-	if info.SUID {
-		lines = append(lines, "", m.styles.danger.Render(m.deps.Catalog.T("warning.suid")), m.deps.Catalog.T("special.suid"))
-	}
-	if info.SGID {
-		code := "special.sgid.file"
-		if m.selected.Type == domain.TypeDirectory {
-			code = "special.sgid.dir"
+		if info.SUID {
+			lines = append(lines, "", m.styles.danger.Render(m.deps.Catalog.T("warning.suid")), m.deps.Catalog.T("special.suid"))
 		}
-		lines = append(lines, m.styles.warning.Render(m.deps.Catalog.T(code)))
-	}
-	if info.Sticky {
-		lines = append(lines, m.styles.warning.Render(m.deps.Catalog.T("special.sticky")))
+		if info.SGID {
+			code := "special.sgid.file"
+			if m.selected.Type == domain.TypeDirectory {
+				code = "special.sgid.dir"
+			}
+			lines = append(lines, m.styles.warning.Render(m.deps.Catalog.T(code)))
+		}
+		if info.Sticky {
+			lines = append(lines, m.styles.warning.Render(m.deps.Catalog.T("special.sticky")))
+		}
 	}
 	return m.styles.panel.Width(width - 4).Height(height - 2).Render(strings.Join(lines, "\n"))
 }

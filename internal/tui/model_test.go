@@ -52,6 +52,38 @@ func TestNavegacaoEntreTelas(t *testing.T) {
 	}
 }
 
+func TestAbaExplicacoesIncluiOwnershipEExemplos(t *testing.T) {
+	m := testModel(t)
+	metadata := domain.FileMetadata{
+		Path:  "/srv/app/uploads",
+		Type:  domain.TypeDirectory,
+		Mode:  domain.PermissionInfo{NumericMode: "2770", SymbolicMode: "rwxrws---", OwnerRead: true, OwnerWrite: true, OwnerExecute: true, GroupRead: true, GroupWrite: true, GroupExecute: true, SGID: true},
+		Owner: domain.UserIdentity{Name: "app", UID: "1002"},
+		Group: domain.GroupIdentity{Name: "web", GID: "1005"},
+	}
+	m.selected = &metadata
+	m.width, m.height, m.screen = 120, 36, 3
+
+	view := m.View()
+	if !strings.Contains(view, "Tópico 1/3") || !strings.Contains(view, "SGID") {
+		t.Fatalf("explicação atual inesperada: %s", view)
+	}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
+	m = updated.(Model)
+	view = m.View()
+	if !strings.Contains(view, "OWNER, GROUP") || !strings.Contains(view, "chgrp") || !strings.Contains(view, "ainda não são") || !strings.Contains(view, "executados pelo PermGuard") {
+		t.Fatalf("explicação de ownership ausente: %s", view)
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("e")})
+	m = updated.(Model)
+	view = m.View()
+	for _, expected := range []string{"chmod 640", "chgrp web", "chown :web", "chown app:web", "chmod 2770"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("exemplo %q ausente: %s", expected, view)
+		}
+	}
+}
+
 func TestAlteracaoExigeConfirmacaoDigitada(t *testing.T) {
 	m := testModel(t)
 	path := filepath.Join(t.TempDir(), "arquivo")
