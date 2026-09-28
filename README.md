@@ -102,6 +102,65 @@ make build
 ./bin/permguard
 ```
 
+## Instalar como utilitário do sistema
+
+Depois de compilar, instale o binário em `/usr/local/bin`. Esse diretório normalmente já pertence ao `PATH` nas distribuições Linux e permite chamar o programa como `permguard` em qualquer diretório:
+
+```bash
+cd permguard
+make build
+sudo install -o root -g root -m 0755 bin/permguard /usr/local/bin/permguard
+```
+
+Confirme a instalação:
+
+```bash
+command -v permguard
+permguard --help
+permguard
+```
+
+O resultado de `command -v permguard` deve ser:
+
+```text
+/usr/local/bin/permguard
+```
+
+Para atualizar uma instalação existente, obtenha a versão mais recente do código, compile novamente e substitua o binário com o mesmo comando:
+
+```bash
+cd permguard
+git pull --ff-only
+make test
+make build
+sudo install -o root -g root -m 0755 bin/permguard /usr/local/bin/permguard
+```
+
+Para remover somente o utilitário instalado, sem apagar o repositório ou os registros de auditoria:
+
+```bash
+sudo rm /usr/local/bin/permguard
+```
+
+### Instalação somente para o usuário atual
+
+Quando não for desejável instalar globalmente, use `~/.local/bin`:
+
+```bash
+mkdir -p "$HOME/.local/bin"
+install -m 0755 bin/permguard "$HOME/.local/bin/permguard"
+```
+
+Caso `~/.local/bin` ainda não esteja no `PATH`, adicione ao arquivo de inicialização do shell:
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+source "$HOME/.bashrc"
+permguard --help
+```
+
+Instalar o executável não concede privilégios administrativos. Execute `permguard` normalmente para inspeção em modo leitura. Use `sudo permguard` somente quando precisar inspecionar caminhos restritos; alterações continuam exigindo `--permitir-alteracoes`, preview e confirmação `ALTERAR`.
+
 ## Modo leitura e modo root
 
 Modo leitura normal:
@@ -149,7 +208,8 @@ Outros usuários (---): sem acesso.
 | `1` | Visão geral e privilégio |
 | `2` | Navegador |
 | `3` ou `p` | Detalhes do item |
-| `4` | Explicação das permissões |
+| `4` | Explicações de acesso, ownership, grupos e exemplos |
+| `e` | Alternar tópico na aba Explicações |
 | `Enter` | Abrir diretório ou detalhes |
 | `Backspace` | Diretório pai |
 | `g` | Informar caminho |
