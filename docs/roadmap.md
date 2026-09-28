@@ -3,7 +3,7 @@
 ## Incrementos 1 e 2 — concluídos
 
 - CLI/TUI, identidade, privilégio, navegação, pesquisa local, metadados, modos e symlinks.
-- Preview e confirmação digitada para chmod individual.
+- Preview e confirmação digitada para chmod, chown e chgrp individuais. **Concluído.**
 - Revalidação device/inode/modo e auditoria JSONL.
 
 ## Próximo incremento — contexto avançado
@@ -12,8 +12,6 @@
 - Catálogo de usuários/grupos.
 - Modelos de ChangeRequest/ChangePreview sem aplicação.
 - Análise de caminhos sensíveis e permissões efetivas.
-
-- `os.Chown` individual, nunca shell concatenado.
 
 ## Incremento 4 — relatórios e refinamento
 

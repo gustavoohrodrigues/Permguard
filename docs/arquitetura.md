@@ -14,7 +14,7 @@ Cobra CLI / Bubble Tea TUI
 
 `internal/filesystem` retorna modelos de domínio e códigos de erro, nunca texto de interface. `internal/permissions` converte modos e retorna códigos semânticos de explicação. A tradução ocorre em CLI/TUI. O catálogo pt-BR é incorporado ao binário.
 
-O pacote `change` centraliza autorização, bloqueios, abertura segura, revalidação e `fchmod`. A TUI e a CLI não chamam syscalls mutáveis diretamente. O pacote `audit` grava somente metadados operacionais em JSONL restrito.
+O pacote `change` centraliza autorização, bloqueios, abertura segura, revalidação, `fchmod` e `fchownat`. A TUI e a CLI não chamam syscalls mutáveis diretamente. O pacote `audit` grava somente metadados operacionais em JSONL restrito.
 
 ## Concorrência
 

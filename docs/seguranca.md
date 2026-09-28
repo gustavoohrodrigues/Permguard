@@ -11,10 +11,10 @@
 
 ## Privilégio
 
-São exibidos UID/GID reais e efetivos, usuário, grupos, root e `CapEff`. Para chmod, o usuário efetivo deve ser root ou proprietário do item. A flag, o privilégio, o preview e a confirmação são verificações independentes.
+São exibidos UID/GID reais e efetivos, usuário, grupos, root e `CapEff`. Para chmod, o usuário efetivo deve ser root ou proprietário do item. Chown exige root. Chgrp exige root ou que o operador seja proprietário e membro do grupo proposto. A flag, o privilégio, o preview e a confirmação são verificações independentes.
 
 ## Mutação individual
 
-O alvo é aberto com `O_NOFOLLOW`, revalidado por descritor e comparado por device, inode e modo. A alteração usa `fchmod`, evitando trocar o alvo por pathname depois da validação. Symlinks, tipos especiais, mounts read-only, `/`, `/proc`, `/sys`, `/dev` e `/run` são bloqueados. Não existe recursão nem repetição automática.
+O alvo é aberto com `O_NOFOLLOW`, revalidado por descritor e comparado por device, inode, modo, UID e GID. As alterações usam `fchmod` ou `fchownat` com `AT_EMPTY_PATH`, evitando trocar o alvo por pathname depois da validação. Symlinks, tipos especiais, mounts read-only, `/`, `/proc`, `/sys`, `/dev` e `/run` são bloqueados. Não existe recursão nem repetição automática.
 
 Outros caminhos sensíveis ainda receberão uma política de confirmação reforçada em incremento futuro.

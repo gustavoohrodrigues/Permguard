@@ -60,6 +60,7 @@ type PrivilegeInfo struct {
 	RealUID, EffectiveUID, RealGID, EffectiveGID int
 	User                                         string
 	Groups                                       []string
+	GroupIDs                                     []int
 	IsRoot                                       bool
 	CapabilitiesHex                              string
 	HasRelevantCapabilities                      bool
@@ -91,7 +92,9 @@ type AuditRecord struct {
 	PreviousMode    string    `json:"previous_mode"`
 	NewMode         string    `json:"new_mode"`
 	PreviousOwner   string    `json:"previous_owner"`
+	NewOwner        string    `json:"new_owner"`
 	PreviousGroup   string    `json:"previous_group"`
+	NewGroup        string    `json:"new_group"`
 	Result          string    `json:"result"`
 	Error           string    `json:"error,omitempty"`
 	Recursive       bool      `json:"recursive"`

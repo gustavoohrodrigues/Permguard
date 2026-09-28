@@ -2,6 +2,11 @@
 
 ## Não publicado
 
+- adiciona alteração individual de proprietário (`chown`) e grupo proprietário (`chgrp`) na CLI e TUI;
+- adiciona lookup de usuário/grupo por nome ou UID/GID, preview, confirmação e auditoria;
+- revalida device, inode, modo, UID e GID antes de operações mutáveis de ownership;
+- amplia a aba Explicações com disponibilidade e atalhos das operações de ownership;
+
 ### Adicionado
 
 - Inspeção em modo somente leitura por padrão.

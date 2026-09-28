@@ -18,12 +18,16 @@ import (
 	"github.com/gustavoohrodrigues/permguard/internal/domain"
 	"github.com/gustavoohrodrigues/permguard/internal/filesystem"
 	"github.com/gustavoohrodrigues/permguard/internal/i18n"
+	"github.com/gustavoohrodrigues/permguard/internal/identity"
 	"github.com/gustavoohrodrigues/permguard/internal/permissions"
 )
 
 type ModeChanger interface {
 	Validate(domain.FileMetadata, int) error
 	ApplyMode(domain.FileMetadata, os.FileMode, int) error
+	ValidateOwner(domain.FileMetadata, domain.PrivilegeInfo) error
+	ValidateGroup(domain.FileMetadata, int, domain.PrivilegeInfo) error
+	ApplyOwnership(domain.FileMetadata, *int, *int, domain.PrivilegeInfo) error
 }
 
 type AuditWriter interface {
@@ -52,12 +56,15 @@ const (
 	inputPath
 	inputSearch
 	inputPermission
+	inputOwner
+	inputGroup
 	inputConfirmation
 )
 
 type appliedMsg struct {
-	metadata domain.FileMetadata
-	err      error
+	metadata  domain.FileMetadata
+	operation string
+	err       error
 }
 type auditLoadedMsg struct {
 	records []domain.AuditRecord
@@ -78,6 +85,9 @@ type Model struct {
 	inputMode                          inputMode
 	pendingMode                        os.FileMode
 	pending                            *domain.FileMetadata
+	pendingOwner, pendingGroup         *int
+	pendingOwnerName, pendingGroupName string
+	pendingOperation                   string
 	loading, quitting, colors, unicode bool
 }
 
@@ -154,7 +164,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.selected = &msg.metadata
 		m.pending = nil
 		m.screen = 2
-		m.status = m.deps.Catalog.T("status.permission_changed")
+		m.status = m.deps.Catalog.T("status." + msg.operation + "_changed")
 	case auditLoadedMsg:
 		m.loading = false
 		if msg.err != nil {
@@ -227,6 +237,10 @@ func (m Model) handleKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openSelected()
 	case "m":
 		return m.startPermissionEdit()
+	case "o":
+		return m.startOwnershipEdit(true)
+	case "G":
+		return m.startOwnershipEdit(false)
 	case "backspace":
 		parent := filepath.Dir(m.path)
 		if parent != m.path {
@@ -375,9 +389,46 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.pendingMode = parsed
+		m.pendingOwner, m.pendingGroup = nil, nil
+		m.pendingOwnerName, m.pendingGroupName = "", ""
+		m.pendingOperation = "permission"
 		metadata := *m.selected
 		m.pending = &metadata
 		m.screen = 5
+		m.status = m.deps.Catalog.T("status.preview_ready")
+		return m, nil
+	}
+	if mode == inputOwner {
+		userIdentity, userID, err := identity.LookupUser(value)
+		if err != nil {
+			m.status = m.translateError(err)
+			return m, nil
+		}
+		if err := m.deps.Changer.ValidateOwner(*m.selected, m.deps.Privilege); err != nil {
+			m.status = m.translateError(err)
+			return m, nil
+		}
+		m.pendingOwner, m.pendingGroup = &userID, nil
+		m.pendingOwnerName, m.pendingGroupName = userIdentity.Name, ""
+		metadata := *m.selected
+		m.pending, m.pendingOperation, m.screen = &metadata, "owner", 5
+		m.status = m.deps.Catalog.T("status.preview_ready")
+		return m, nil
+	}
+	if mode == inputGroup {
+		groupIdentity, groupID, err := identity.LookupGroup(value)
+		if err != nil {
+			m.status = m.translateError(err)
+			return m, nil
+		}
+		if err := m.deps.Changer.ValidateGroup(*m.selected, groupID, m.deps.Privilege); err != nil {
+			m.status = m.translateError(err)
+			return m, nil
+		}
+		m.pendingOwner, m.pendingGroup = nil, &groupID
+		m.pendingOwnerName, m.pendingGroupName = "", groupIdentity.Name
+		metadata := *m.selected
+		m.pending, m.pendingOperation, m.screen = &metadata, "group", 5
 		m.status = m.deps.Catalog.T("status.preview_ready")
 		return m, nil
 	}
@@ -420,25 +471,78 @@ func (m Model) startPermissionEdit() (tea.Model, tea.Cmd) {
 	return m, textinput.Blink
 }
 
+func (m Model) startOwnershipEdit(owner bool) (tea.Model, tea.Cmd) {
+	if !m.deps.AllowWrites {
+		m.status = m.deps.Catalog.T("error.escrita_nao_habilitada")
+		return m, nil
+	}
+	if m.selected == nil || m.deps.Changer == nil {
+		m.status = m.deps.Catalog.T("error.nenhum_item_selecionado")
+		return m, nil
+	}
+	if owner {
+		if err := m.deps.Changer.ValidateOwner(*m.selected, m.deps.Privilege); err != nil {
+			m.status = m.translateError(err)
+			return m, nil
+		}
+		m.inputMode = inputOwner
+		m.input.SetValue(m.selected.Owner.Name)
+		m.input.Placeholder = m.deps.Catalog.T("label.owner_input")
+	} else {
+		m.inputMode = inputGroup
+		m.input.SetValue(m.selected.Group.Name)
+		m.input.Placeholder = m.deps.Catalog.T("label.group_input")
+	}
+	m.input.Focus()
+	return m, textinput.Blink
+}
+
 func (m Model) applyPending() tea.Cmd {
 	expected, mode := *m.pending, m.pendingMode
+	ownerID, groupID := m.pendingOwner, m.pendingGroup
+	ownerName, groupName, operation := m.pendingOwnerName, m.pendingGroupName, m.pendingOperation
 	return func() tea.Msg {
-		err := m.deps.Changer.ApplyMode(expected, mode, m.deps.Privilege.EffectiveUID)
+		var err error
+		switch operation {
+		case "owner", "group":
+			err = m.deps.Changer.ApplyOwnership(expected, ownerID, groupID, m.deps.Privilege)
+		default:
+			err = m.deps.Changer.ApplyMode(expected, mode, m.deps.Privilege.EffectiveUID)
+		}
 		result, errorText := "sucesso", ""
 		if err != nil {
 			result, errorText = "falha", err.Error()
 		}
-		record := domain.AuditRecord{Timestamp: time.Now(), OperatorUser: m.deps.Privilege.User, OperatorUID: m.deps.Privilege.EffectiveUID, TargetPath: expected.Path, TargetType: expected.Type, Operation: "chmod", PreviousMode: expected.Mode.NumericMode, NewMode: permissions.FromFileMode(mode).NumericMode, PreviousOwner: expected.Owner.Name, PreviousGroup: expected.Group.Name, Result: result, Error: errorText, SymlinkDetected: expected.IsSymlink}
+		updated := expected
+		var inspectErr error
+		if err == nil {
+			updated, inspectErr = m.deps.Inspector.Inspect(expected.Path)
+		}
+		newMode, newOwner, newGroup, auditOperation := expected.Mode.NumericMode, expected.Owner.Name, expected.Group.Name, "chmod"
+		switch operation {
+		case "permission":
+			newMode = permissions.FromFileMode(mode).NumericMode
+		case "owner":
+			newOwner, auditOperation = ownerName, "chown"
+		case "group":
+			newGroup, auditOperation = groupName, "chgrp"
+		}
+		if inspectErr == nil && err == nil {
+			newMode, newOwner, newGroup = updated.Mode.NumericMode, updated.Owner.Name, updated.Group.Name
+		}
+		record := domain.AuditRecord{Timestamp: time.Now(), OperatorUser: m.deps.Privilege.User, OperatorUID: m.deps.Privilege.EffectiveUID, TargetPath: expected.Path, TargetType: expected.Type, Operation: auditOperation, PreviousMode: expected.Mode.NumericMode, NewMode: newMode, PreviousOwner: expected.Owner.Name, NewOwner: newOwner, PreviousGroup: expected.Group.Name, NewGroup: newGroup, Result: result, Error: errorText, SymlinkDetected: expected.IsSymlink}
 		if m.deps.Audit != nil {
 			if auditErr := m.deps.Audit.Append(record); auditErr != nil && err == nil {
 				err = auditErr
 			}
 		}
 		if err != nil {
-			return appliedMsg{err: err}
+			return appliedMsg{operation: operation, err: err}
 		}
-		updated, inspectErr := m.deps.Inspector.Inspect(expected.Path)
-		return appliedMsg{metadata: updated, err: inspectErr}
+		if inspectErr != nil {
+			return appliedMsg{operation: operation, err: fmt.Errorf("alteracao_concluida_reinspecao_falhou: %w", inspectErr)}
+		}
+		return appliedMsg{metadata: updated, operation: operation, err: inspectErr}
 	}
 }
 
@@ -510,6 +614,10 @@ func (m Model) View() string {
 			prompt = m.deps.Catalog.T("label.path_input")
 		case inputPermission:
 			prompt = m.deps.Catalog.T("label.permission_input")
+		case inputOwner:
+			prompt = m.deps.Catalog.T("label.owner_input")
+		case inputGroup:
+			prompt = m.deps.Catalog.T("label.group_input")
 		case inputConfirmation:
 			prompt = m.deps.Catalog.T("label.confirmation_input")
 		case inputNone, inputSearch:
@@ -524,13 +632,29 @@ func (m Model) changePreview(height, width int) string {
 	if m.pending == nil {
 		return m.styles.panel.Width(width - 4).Height(height - 2).Render(m.deps.Catalog.T("label.none"))
 	}
-	newInfo := permissions.FromFileMode(m.pendingMode)
+	title := m.deps.Catalog.T("change.preview_title")
+	current := m.pending.Mode.NumericMode + " · " + m.pending.Mode.SymbolicMode
+	proposed := permissions.FromFileMode(m.pendingMode).NumericMode + " · " + permissions.FromFileMode(m.pendingMode).SymbolicMode
+	impact := m.deps.Catalog.T("change.impact.mode")
+	switch m.pendingOperation {
+	case "owner":
+		title = m.deps.Catalog.T("change.preview_owner_title")
+		current = m.pending.Owner.Name + " (UID " + m.pending.Owner.UID + ")"
+		proposed = m.pendingOwnerName + " (UID " + strconv.Itoa(*m.pendingOwner) + ")"
+		impact = m.deps.Catalog.T("change.impact.owner")
+	case "group":
+		title = m.deps.Catalog.T("change.preview_group_title")
+		current = m.pending.Group.Name + " (GID " + m.pending.Group.GID + ")"
+		proposed = m.pendingGroupName + " (GID " + strconv.Itoa(*m.pendingGroup) + ")"
+		impact = m.deps.Catalog.T("change.impact.group")
+	}
 	lines := []string{
-		m.styles.danger.Render(m.deps.Catalog.T("change.preview_title")), "",
+		m.styles.danger.Render(title), "",
 		kv(m.deps.Catalog.T("label.current_path"), m.pending.Path),
 		kv(m.deps.Catalog.T("label.type"), m.deps.Catalog.T("type."+string(m.pending.Type))),
-		kv(m.deps.Catalog.T("change.current"), m.pending.Mode.NumericMode+" · "+m.pending.Mode.SymbolicMode),
-		kv(m.deps.Catalog.T("change.proposed"), newInfo.NumericMode+" · "+newInfo.SymbolicMode), "",
+		kv(m.deps.Catalog.T("change.current"), current),
+		kv(m.deps.Catalog.T("change.proposed"), proposed), "",
+		m.styles.warning.Render(impact),
 		m.styles.warning.Render(m.deps.Catalog.T("change.warning")),
 		m.deps.Catalog.T("change.confirm_hint"),
 	}
@@ -631,7 +755,14 @@ func (m Model) auditView(height, width int) string {
 		if record.Result != "sucesso" {
 			resultStyle = m.styles.danger
 		}
-		line := fmt.Sprintf("%s  %-8s %-7s %4s→%-4s %s", record.Timestamp.Local().Format("02/01 15:04"), resultStyle.Render(record.Result), record.Operation, record.PreviousMode, record.NewMode, truncate(record.TargetPath, max(12, width-55)))
+		change := record.PreviousMode + "→" + record.NewMode
+		switch record.Operation {
+		case "chown":
+			change = record.PreviousOwner + "→" + record.NewOwner
+		case "chgrp":
+			change = record.PreviousGroup + "→" + record.NewGroup
+		}
+		line := fmt.Sprintf("%s  %-8s %-7s %-19s %s", record.Timestamp.Local().Format("02/01 15:04"), resultStyle.Render(record.Result), record.Operation, truncate(change, 19), truncate(record.TargetPath, max(12, width-65)))
 		lines = append(lines, line)
 	}
 	if len(m.auditRecords) == 0 && !m.loading {

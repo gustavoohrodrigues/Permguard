@@ -17,6 +17,7 @@ import (
 	"github.com/gustavoohrodrigues/permguard/internal/domain"
 	"github.com/gustavoohrodrigues/permguard/internal/filesystem"
 	"github.com/gustavoohrodrigues/permguard/internal/i18n"
+	"github.com/gustavoohrodrigues/permguard/internal/identity"
 	"github.com/gustavoohrodrigues/permguard/internal/permissions"
 	"github.com/gustavoohrodrigues/permguard/internal/privilege"
 	"github.com/gustavoohrodrigues/permguard/internal/tui"
@@ -57,12 +58,111 @@ func (a *Application) Execute() error {
 		}
 		return tui.Run(tui.Dependencies{Catalog: catalog, Inspector: inspector, Privilege: privileges, Config: cfg, Changer: change.Service{Inspector: inspector}, Audit: auditWriter, AuditPath: auditPath, AllowWrites: a.allowWrites})
 	}
-	root.AddCommand(a.inspectCommand(preCatalog), a.permissionCommand(preCatalog), a.changePermissionCommand(preCatalog))
+	root.AddCommand(a.inspectCommand(preCatalog), a.permissionCommand(preCatalog), a.changePermissionCommand(preCatalog), a.changeOwnershipCommand(preCatalog, true), a.changeOwnershipCommand(preCatalog, false))
 	root.SetHelpFunc(func(cmd *cobra.Command, _ []string) { printHelp(cmd, preCatalog) })
 	if err := root.Execute(); err != nil {
 		return fmt.Errorf(preCatalog.T("error.prefix"), localizedError(preCatalog, err))
 	}
 	return nil
+}
+
+func (a *Application) changeOwnershipCommand(initial *i18n.Catalog, owner bool) *cobra.Command {
+	var identityValue, confirmation string
+	use, shortKey, flagName, flagKey := "alterar-grupo CAMINHO", "cli.change_group.short", "grupo", "cli.group"
+	if owner {
+		use, shortKey, flagName, flagKey = "alterar-owner CAMINHO", "cli.change_owner.short", "usuario", "cli.user"
+	}
+	command := &cobra.Command{Use: use, Short: initial.T(shortKey), Args: exactOne, RunE: func(cmd *cobra.Command, args []string) error {
+		if !a.allowWrites {
+			return fmt.Errorf("escrita_nao_habilitada")
+		}
+		cfg, catalog, err := a.runtime()
+		if err != nil {
+			return err
+		}
+		inspector := filesystem.Inspector{}
+		metadata, err := inspector.Inspect(args[0])
+		if err != nil {
+			return err
+		}
+		privileges, service := privilege.Detect(), change.Service{Inspector: inspector}
+		var ownerID, groupID *int
+		newOwner, newGroup := metadata.Owner.Name, metadata.Group.Name
+		operation, previewTitle := "chgrp", catalog.T("change.preview_group_title")
+		if owner {
+			resolved, id, lookupErr := identity.LookupUser(identityValue)
+			if lookupErr != nil {
+				return lookupErr
+			}
+			if err := service.ValidateOwner(metadata, privileges); err != nil {
+				return err
+			}
+			ownerID, newOwner, operation, previewTitle = &id, resolved.Name, "chown", catalog.T("change.preview_owner_title")
+		} else {
+			resolved, id, lookupErr := identity.LookupGroup(identityValue)
+			if lookupErr != nil {
+				return lookupErr
+			}
+			if err := service.ValidateGroup(metadata, id, privileges); err != nil {
+				return err
+			}
+			groupID, newGroup = &id, resolved.Name
+		}
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\n%s: %s\n%s: %s:%s\n%s: %s:%s\n%s\n", previewTitle, catalog.T("label.current_path"), metadata.Path, catalog.T("change.current"), metadata.Owner.Name, metadata.Group.Name, catalog.T("change.proposed"), newOwner, newGroup, catalog.T("change.warning")); err != nil {
+			return err
+		}
+		confirmed, err := requestConfirmation(cmd, confirmation, cfg.Security.ConfirmationWord, catalog)
+		if err != nil {
+			return err
+		}
+		if !confirmed {
+			return fmt.Errorf("confirmacao_invalida")
+		}
+		applyErr := service.ApplyOwnership(metadata, ownerID, groupID, privileges)
+		result, errorText := "sucesso", ""
+		if applyErr != nil {
+			result, errorText = "falha", applyErr.Error()
+		}
+		updated := metadata
+		if applyErr == nil {
+			if current, inspectErr := inspector.Inspect(metadata.Path); inspectErr == nil {
+				updated, newOwner, newGroup = current, current.Owner.Name, current.Group.Name
+			}
+		}
+		if cfg.Audit.Enabled {
+			path, pathErr := audit.Path(cfg.Audit.UserPath, cfg.Audit.RootPath, privileges.IsRoot)
+			if pathErr != nil {
+				return pathErr
+			}
+			record := domain.AuditRecord{Timestamp: time.Now(), OperatorUser: privileges.User, OperatorUID: privileges.EffectiveUID, TargetPath: metadata.Path, TargetType: metadata.Type, Operation: operation, PreviousMode: metadata.Mode.NumericMode, NewMode: updated.Mode.NumericMode, PreviousOwner: metadata.Owner.Name, NewOwner: newOwner, PreviousGroup: metadata.Group.Name, NewGroup: newGroup, Result: result, Error: errorText}
+			if auditErr := (audit.Writer{Path: path}).Append(record); auditErr != nil && applyErr == nil {
+				return auditErr
+			}
+		}
+		if applyErr != nil {
+			return applyErr
+		}
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), catalog.T("status."+map[bool]string{true: "owner", false: "group"}[owner]+"_changed"))
+		return err
+	}}
+	command.Flags().StringVar(&identityValue, flagName, "", initial.T(flagKey))
+	command.Flags().StringVar(&confirmation, "confirmar", "", initial.T("cli.confirm"))
+	_ = command.MarkFlagRequired(flagName)
+	return command
+}
+
+func requestConfirmation(cmd *cobra.Command, supplied, expected string, catalog *i18n.Catalog) (bool, error) {
+	if supplied == "" {
+		if _, err := fmt.Fprint(cmd.OutOrStdout(), catalog.T("label.confirmation_input")+": "); err != nil {
+			return false, err
+		}
+		scanner := bufio.NewScanner(cmd.InOrStdin())
+		if !scanner.Scan() {
+			return false, nil
+		}
+		supplied = strings.TrimSpace(scanner.Text())
+	}
+	return supplied == expected, nil
 }
 
 func (a *Application) changePermissionCommand(initial *i18n.Catalog) *cobra.Command {
@@ -116,7 +216,7 @@ func (a *Application) changePermissionCommand(initial *i18n.Catalog) *cobra.Comm
 			if pathErr != nil {
 				return pathErr
 			}
-			record := domain.AuditRecord{Timestamp: time.Now(), OperatorUser: privileges.User, OperatorUID: privileges.EffectiveUID, TargetPath: metadata.Path, TargetType: metadata.Type, Operation: "chmod", PreviousMode: metadata.Mode.NumericMode, NewMode: proposed.NumericMode, PreviousOwner: metadata.Owner.Name, PreviousGroup: metadata.Group.Name, Result: result, Error: errorText}
+			record := domain.AuditRecord{Timestamp: time.Now(), OperatorUser: privileges.User, OperatorUID: privileges.EffectiveUID, TargetPath: metadata.Path, TargetType: metadata.Type, Operation: "chmod", PreviousMode: metadata.Mode.NumericMode, NewMode: proposed.NumericMode, PreviousOwner: metadata.Owner.Name, NewOwner: metadata.Owner.Name, PreviousGroup: metadata.Group.Name, NewGroup: metadata.Group.Name, Result: result, Error: errorText}
 			if auditErr := (audit.Writer{Path: path}).Append(record); auditErr != nil && applyErr == nil {
 				return auditErr
 			}

@@ -30,7 +30,7 @@ flowchart LR
     E -- Sim --> G[Preview completo]
     G --> H[Confirmação ALTERAR]
     H --> I[Revalidação inode, device e modo]
-    I --> J[Chmod via descritor seguro]
+    I --> J[Chmod, chown ou chgrp via descritor seguro]
     J --> K[Auditoria JSONL 0600]
 ```
 
@@ -64,12 +64,13 @@ Implementado:
 - Arquivo, diretório, symlink, socket, FIFO e devices.
 - Conversão e explicação de modos `000` a `7777`, incluindo SUID, SGID e sticky.
 - Alteração individual de modo em arquivo ou diretório.
+- Alteração individual de proprietário e de grupo proprietário.
 - Preview, confirmação digitada, revalidação anti-TOCTOU e auditoria JSONL `0600`.
 - Temas Midnight, Nord, Gruvbox Dark, Dracula e High Contrast.
 - Modo sem cores, bordas ASCII, filtros por tipo e ordenação da listagem.
 - Tela de auditoria e menu de ajuda contextual dentro da TUI.
 
-Não implementado: chown, chgrp, relatórios, ACL/SELinux/capabilities mutáveis e recursão. Consulte [o roadmap](docs/roadmap.md).
+Não implementado: relatórios, ACL/SELinux/capabilities mutáveis e recursão. Consulte [o roadmap](docs/roadmap.md).
 
 ## Requisitos
 
@@ -188,6 +189,8 @@ permguard inspecionar /srv/app/uploads
 permguard permissao explicar 770
 permguard --permitir-alteracoes alterar-permissao /srv/app/uploads --modo 770
 permguard --permitir-alteracoes alterar-permissao /srv/app/uploads --modo 770 --confirmar ALTERAR
+sudo permguard --permitir-alteracoes alterar-owner /srv/app/uploads --usuario app --confirmar ALTERAR
+permguard --permitir-alteracoes alterar-grupo /srv/app/uploads --grupo web --confirmar ALTERAR
 ```
 
 Exemplo de explicação:
@@ -217,6 +220,8 @@ Outros usuários (---): sem acesso.
 | `c` | Limpar filtro |
 | `r` | Atualizar |
 | `m` | Informar uma nova permissão para o item selecionado |
+| `o` | Alterar o proprietário do item selecionado; exige root |
+| `G` | Alterar somente o grupo proprietário |
 | `f` | Alternar filtro: todos, diretórios, arquivos e links |
 | `s` | Ordenar por nome, tamanho, permissão ou modificação |
 | `a` | Abrir auditoria local |
@@ -233,7 +238,7 @@ Outros usuários (---): sem acesso.
 - `chgrp`: altera somente o grupo proprietário.
 - ACL: pode conceder acesso além de owner/group/others; edição fica fora do MVP.
 
-O estado atual implementa somente `chmod` individual. `chown`, `chgrp` e edição de ACL continuam indisponíveis.
+O PermGuard implementa `chmod`, `chown` e `chgrp` individuais. Todas as operações exigem `--permitir-alteracoes`, preview, confirmação `ALTERAR`, revalidação anti-TOCTOU e auditoria. Alterar owner exige root; um usuário sem root somente pode trocar o grupo de um item próprio para um de seus grupos efetivos. A edição de ACL continua indisponível.
 
 ## Alterar uma permissão pela TUI
 
@@ -248,6 +253,20 @@ permguard --permitir-alteracoes
 5. Pressione `Enter` e digite exatamente `ALTERAR`.
 
 Symlinks, devices, sockets, `/`, `/proc`, `/sys`, `/dev` e `/run` são bloqueados. Não há recursão nem repetição automática.
+
+## Alterar proprietário ou grupo pela TUI
+
+```bash
+sudo permguard --permitir-alteracoes
+```
+
+1. Selecione o arquivo ou diretório.
+2. Pressione `o` para alterar o proprietário ou `G` para alterar somente o grupo.
+3. Informe um nome ou UID/GID existente.
+4. Revise o caminho absoluto, tipo, estado atual, estado proposto e impacto.
+5. Pressione `Enter` e digite exatamente `ALTERAR`.
+
+O PermGuard usa lookup do sistema para validar usuário e grupo. A mudança é feita por syscall sobre descritor seguro, sem montar comandos de shell. O alvo é revalidado imediatamente antes da operação; mudanças de inode, device, modo, UID ou GID cancelam a execução.
 
 ## Pesquisa e inclusão de caminhos
 

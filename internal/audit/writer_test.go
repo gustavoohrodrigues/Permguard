@@ -12,7 +12,7 @@ import (
 
 func TestAppendJSONLRestrito(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "estado", "audit.jsonl")
-	record := domain.AuditRecord{Timestamp: time.Unix(1, 0), OperatorUser: "teste", TargetPath: "/caminho/ficticio", Operation: "chmod", PreviousMode: "600", NewMode: "640", Result: "sucesso"}
+	record := domain.AuditRecord{Timestamp: time.Unix(1, 0), OperatorUser: "teste", TargetPath: "/caminho/ficticio", Operation: "chgrp", PreviousMode: "640", NewMode: "640", PreviousOwner: "app", NewOwner: "app", PreviousGroup: "app", NewGroup: "web", Result: "sucesso"}
 	if err := (Writer{Path: path}).Append(record); err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestAppendJSONLRestrito(t *testing.T) {
 	}
 	data, _ := os.ReadFile(path) // #nosec G304 -- caminho temporário controlado pelo teste.
 	text := string(data)
-	if !strings.Contains(text, `"operation":"chmod"`) || strings.Contains(text, "conteudo") {
+	if !strings.Contains(text, `"operation":"chgrp"`) || !strings.Contains(text, `"new_group":"web"`) || strings.Contains(text, "conteudo") {
 		t.Fatalf("registro inesperado: %s", text)
 	}
 }

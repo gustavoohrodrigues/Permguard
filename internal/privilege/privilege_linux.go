@@ -29,6 +29,7 @@ func Detect() domain.PrivilegeInfo {
 			continue
 		}
 		seen[id] = true
+		info.GroupIDs = append(info.GroupIDs, id)
 		idText := strconv.Itoa(id)
 		if group, err := user.LookupGroupId(idText); err == nil {
 			info.Groups = append(info.Groups, group.Name)
